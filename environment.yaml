@@ -1,3 +1,4 @@
+# For the Mamba experiment, use environment_mamba.yaml (official mamba-ssm needs a newer Python than this base env).
 name: rf_dml
 channels:
   - pytorch

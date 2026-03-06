@@ -1,0 +1,20 @@
+# Deprecated compatibility alias. Prefer `environment_py310.yaml`.
+name: rf_dml_mamba
+channels:
+  - pytorch
+  - nvidia
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch=1.13.1
+  - pytorch-cuda=11.6
+  - torchvision=0.14.1
+  - torchaudio=0.13.1
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - h5py
+  - pip:
+      - -r requirements_mamba.txt

@@ -1,0 +1,14 @@
+# Portable runtime dependencies for the unified Python 3.10 environment.
+# Core numerical packages stay in conda via environment_py310.yaml.
+
+tqdm==4.64.1
+tensorboardX==2.6.2.2
+opencv-python==4.7.0.72
+PyYAML==6.0.2
+pytest==8.3.5
+
+# Lightweight utilities kept from the original environment when they do not
+# introduce fragile platform-specific build steps.
+einops==0.6.1
+seaborn==0.12.2
+timm==0.6.13

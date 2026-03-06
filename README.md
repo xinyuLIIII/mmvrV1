@@ -20,8 +20,18 @@ cd mmVR
 ```
 
 - Install [PyTorch](http://pytorch.org) and other dependencies (e.g., torchvision, torch, numpy).
-  - For pip users, please type the command `pip install -r requirements.txt`.
-  - For Conda users, you can create a new Conda environment using `conda env create -f environment.yml`.
+  - Legacy Transformer environment (historical, Python 3.7):
+    - Pip: `pip install -r requirements.txt`
+    - Conda: `conda env create -f environment.yaml`
+  - Recommended unified environment (Python 3.10, supports Transformer + Mamba):
+    - Conda: `conda env create -f environment_py310.yaml`
+    - Activate: `conda activate mmvr-py310`
+    - This uses `requirements_py310.txt` plus `requirements_mamba.txt` and avoids the non-portable `file:///...` pins from the old environment.
+  - Compatibility alias for older notes/scripts:
+    - Conda: `conda env create -f environment_mamba.yaml`
+  - Low-memory fallback (recommended on small instances where `conda env create` gets killed):
+    - `bash scripts/setup_mmvr_py310.sh`
+    - Optional custom env name: `bash scripts/setup_mmvr_py310.sh my-mmvr-env`
 
 ### mmVR dataset
 
@@ -34,6 +44,12 @@ cd mmVR
 python train_kpt.py 
 ```
 
+- Train and test model by mmwave + imu (Mamba variant):
+
+```bash
+python train_kpt_mamba.py
+```
+
 - Train and test model by keypoint (stage2):
 
 ```bash
@@ -44,6 +60,7 @@ python train_cls.py
 ```bash
 .
 │  config.py
+│  environment_py310.yaml
 │  train_cls.py
 │  train_kpt.py
 │  requirements.txt
