@@ -28,9 +28,10 @@ class MissingMambaDependencyError(ImportError):
 def _raise_mamba_dependency_error():
     message = (
         "mmVR_Mamba requires the official `mamba-ssm` implementation and its "
-        "`causal-conv1d` dependency. Install them in a dedicated environment "
-        "(recommended: Python >= 3.8, torch >= 1.12, CUDA >= 11.6) with "
-        "`pip install causal-conv1d>=1.4.0 mamba-ssm`."
+        "`causal-conv1d` dependency. Install them in the Python 3.10 setup "
+        "environment (recommended: `bash scripts/setup_mmvr_py310.sh`, or "
+        "torch==2.5.1 + CUDA 11.8 with `causal-conv1d==1.6.0` and "
+        "`mamba-ssm==2.3.0`)."
     )
     raise MissingMambaDependencyError(message) from _MAMBA_IMPORT_ERROR
 

@@ -26,12 +26,13 @@ cd mmVR
   - Recommended unified environment (Python 3.10, supports Transformer + Mamba):
     - Conda: `conda env create -f environment_py310.yaml`
     - Activate: `conda activate mmvr-py310`
-    - This uses `requirements_py310.txt` plus `requirements_mamba.txt` and avoids the non-portable `file:///...` pins from the old environment.
+    - This locks `torch==2.5.1`, `torchvision==0.20.1`, `torchaudio==2.5.1`, `timm==1.0.24`, and fixed official wheels for `causal-conv1d` / `mamba-ssm`.
   - Compatibility alias for older notes/scripts:
     - Conda: `conda env create -f environment_mamba.yaml`
-  - Low-memory fallback (recommended on small instances where `conda env create` gets killed):
+  - Recommended script install (best match for the official Mamba wheels and detailed logs):
     - `bash scripts/setup_mmvr_py310.sh`
     - Optional custom env name: `bash scripts/setup_mmvr_py310.sh my-mmvr-env`
+    - Defaults to CUDA `cu118`, which is the recommended target for future `RTX 2080 Ti` experiments.
 
 ### mmVR dataset
 
