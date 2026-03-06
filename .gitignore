@@ -222,14 +222,14 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Local dataset copies and training artifacts
-data/mmVR/
-data/imu
-data/kpt_gt
-data/kpt_output
-data/mmwave
-data/keypoint_gt
-data/keypoint_output
+# Local dataset symlink mounts (autodl-tmp) and training artifacts
+/data/mmVR/
+/data/imu
+/data/kpt_gt
+/data/kpt_output
+/data/mmwave
+/data/keypoint_gt
+/data/keypoint_output
 wandb/
 runs/
 lightning_logs/

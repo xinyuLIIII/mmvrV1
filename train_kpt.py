@@ -75,13 +75,21 @@ if __name__ == '__main__':
     print('train_size: ', train_size)
     print('test_size: ', test_size)
     model, criterion = build_model(args)
+    grad_accum_steps = max(1, args.grad_accum_steps)
+    if grad_accum_steps != args.grad_accum_steps:
+        print(f'Adjusted grad_accum_steps from {args.grad_accum_steps} to {grad_accum_steps}.')
+    if grad_accum_steps > 1:
+        print(f'Using gradient accumulation: {grad_accum_steps} steps.')
     base_batch_size = 32
+    effective_batch_size = args.batch_size * grad_accum_steps
     effective_lr = args.lr
-    if args.batch_size != base_batch_size and abs(args.lr - 1e-4) < 1e-12:
-        effective_lr = args.lr * args.batch_size / base_batch_size
+    if effective_batch_size != base_batch_size and abs(args.lr - 1e-4) < 1e-12:
+        effective_lr = args.lr * effective_batch_size / base_batch_size
         print(
             f'Auto-scaled lr from {args.lr:.8f} to {effective_lr:.8f} '
-            f'for batch_size={args.batch_size} (base_batch_size={base_batch_size}).'
+            f'for effective_batch_size={effective_batch_size} '
+            f'(batch_size={args.batch_size}, grad_accum_steps={grad_accum_steps}, '
+            f'base_batch_size={base_batch_size}).'
         )
     optimizer = torch.optim.AdamW(model.parameters(), lr=effective_lr, weight_decay=args.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_drop, gamma=0.5)
@@ -108,11 +116,12 @@ if __name__ == '__main__':
         losses = 0
         model.train()
         criterion.train()
-        for samples, imu, target in tqdm(train_loader):
+        optimizer.zero_grad(set_to_none=True)
+        train_num_steps = len(train_loader)
+        for step, (samples, imu, target) in enumerate(tqdm(train_loader)):
             samples = samples.to(device, non_blocking=True)
             imu = imu.to(device, non_blocking=True)
             target = [{k: v.to(device, non_blocking=True) for k, v in t.items()} for t in target]
-            optimizer.zero_grad(set_to_none=True)
             with torch.cuda.amp.autocast(enabled=amp_enabled):
                 out = model(samples, imu)
                 if mem_stats_active and 'pose_memory' in out:
@@ -120,9 +129,13 @@ if __name__ == '__main__':
                 loss_dict = criterion(out, target)
                 weight_dict = criterion.weight_dict
                 losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
-            scaler.scale(losses).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            losses_for_backward = losses / grad_accum_steps
+            scaler.scale(losses_for_backward).backward()
+            should_step = ((step + 1) % grad_accum_steps == 0) or ((step + 1) == train_num_steps)
+            if should_step:
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
         lr_scheduler.step()
         best_mpjpe_train, best_acc_train, _, is_save = misc.log_save(model_name, train_writer, train_logger, i, losses, loss_dict, criterion, train_size, best_mpjpe_train, best_acc_train, mode=True)
 
