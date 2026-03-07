@@ -1,5 +1,7 @@
 import unittest
 from pathlib import Path
+import subprocess
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -36,8 +38,8 @@ class EnvironmentDefinitionTests(unittest.TestCase):
         self.assertIn('-r requirements_py310.txt', mamba_text)
         self.assertIn('tensorboardX', base_text)
         self.assertIn('timm==1.0.24', base_text)
-        self.assertIn('causal_conv1d-1.6.0+cu118torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl', mamba_text)
-        self.assertIn('mamba_ssm-2.3.0+cu118torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl', mamba_text)
+        self.assertIn('causal_conv1d-1.6.0+cu11torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl', mamba_text)
+        self.assertIn('mamba_ssm-2.3.0+cu11torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl', mamba_text)
         self.assertNotIn('torch==1.13.1', mamba_text)
 
         setup_script = ROOT / 'scripts' / 'setup_mmvr_py310.sh'
@@ -54,8 +56,8 @@ class EnvironmentDefinitionTests(unittest.TestCase):
         self.assertIn('CAUSAL_CONV1D_WHL_URL', script_text)
         self.assertIn('MAMBA_SSM_WHL_URL', script_text)
         self.assertIn('download_wheel()', script_text)
-        self.assertIn('causal_conv1d-1.6.0+cu118torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl', script_text)
-        self.assertIn('mamba_ssm-2.3.0+cu118torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl', script_text)
+        self.assertIn('causal_conv1d-1.6.0+cu11torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl', script_text)
+        self.assertIn('mamba_ssm-2.3.0+cu11torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl', script_text)
         self.assertIn('case "$PYTORCH_INDEX_MODE" in', script_text)
         self.assertIn('mirror)', script_text)
         self.assertIn('official-cu118)', script_text)
@@ -66,6 +68,40 @@ class EnvironmentDefinitionTests(unittest.TestCase):
         self.assertIn('python -m pip install "$causal_wheel"', script_text)
         self.assertIn('python -m pip install "$mamba_wheel"', script_text)
         self.assertNotIn('torch==1.13.1+cu116', script_text)
+
+    def test_download_wheel_returns_clean_path_without_log_prefix(self):
+        setup_script = ROOT / 'scripts' / 'setup_mmvr_py310.sh'
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            fake_bin = temp_path / 'bin'
+            fake_bin.mkdir()
+            fake_wget = fake_bin / 'wget'
+            fake_wget.write_text(
+                '#!/usr/bin/env bash\n'
+                'set -euo pipefail\n'
+                'printf wheel > "$2"\n',
+                encoding='utf-8',
+            )
+            fake_wget.chmod(0o755)
+
+            dest_dir = temp_path / 'wheels'
+            url = 'https://example.com/test.whl'
+            command = f'''set -euo pipefail
+source <(sed '/^ensure_conda$/,$d' "{setup_script}")
+PATH="{fake_bin}:$PATH"
+result="$(download_wheel "{url}" "{dest_dir}")"
+printf '%s' "$result"
+'''
+
+            completed = subprocess.run(
+                ['bash', '-lc', command],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(str(dest_dir / 'test.whl'), completed.stdout)
 
 
 if __name__ == '__main__':

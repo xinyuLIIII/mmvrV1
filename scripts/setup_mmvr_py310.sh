@@ -11,8 +11,8 @@ TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.5.1}"
 TIMM_VERSION="${TIMM_VERSION:-1.0.24}"
 PYTORCH_INDEX_MODE="${PYTORCH_INDEX_MODE:-mirror}"
 TORCH_WHEEL_INDEX="${TORCH_WHEEL_INDEX:-https://download.pytorch.org/whl/cu118}"
-CAUSAL_CONV1D_WHL_URL="${CAUSAL_CONV1D_WHL_URL:-https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.6.0/causal_conv1d-1.6.0+cu118torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl}"
-MAMBA_SSM_WHL_URL="${MAMBA_SSM_WHL_URL:-https://github.com/state-spaces/mamba/releases/download/v2.3.0/mamba_ssm-2.3.0+cu118torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl}"
+CAUSAL_CONV1D_WHL_URL="${CAUSAL_CONV1D_WHL_URL:-https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.6.0/causal_conv1d-1.6.0+cu11torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl}"
+MAMBA_SSM_WHL_URL="${MAMBA_SSM_WHL_URL:-https://github.com/state-spaces/mamba/releases/download/v2.3.0/mamba_ssm-2.3.0+cu11torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl}"
 WHEEL_DIR="${WHEEL_DIR:-/tmp/mmvr-py310-wheels}"
 
 if [ "$DEBUG" = "1" ]; then
@@ -24,7 +24,7 @@ log_step() {
 }
 
 log_info() {
-  printf '[info] %s\n' "$1"
+  printf '[info] %s\n' "$1" >&2
 }
 
 ensure_conda() {
