@@ -29,10 +29,14 @@ cd mmVR
     - This locks `torch==2.5.1`, `torchvision==0.20.1`, `torchaudio==2.5.1`, `timm==1.0.24`, and fixed official wheels for `causal-conv1d` / `mamba-ssm`.
   - Compatibility alias for older notes/scripts:
     - Conda: `conda env create -f environment_mamba.yaml`
-  - Recommended script install (best match for the official Mamba wheels and detailed logs):
+  - Recommended script install (faster by default on domestic pip mirrors, with a compatibility switch):
     - `bash scripts/setup_mmvr_py310.sh`
     - Optional custom env name: `bash scripts/setup_mmvr_py310.sh my-mmvr-env`
-    - Defaults to CUDA `cu118`, which is the recommended target for future `RTX 2080 Ti` experiments.
+    - Default mode is `PYTORCH_INDEX_MODE=mirror` (no `--index-url`, so pip can use your local mirror).
+    - To force official CUDA `cu118` PyTorch wheels:
+      - `PYTORCH_INDEX_MODE=official-cu118 bash scripts/setup_mmvr_py310.sh`
+    - Optional custom official index (only used in `official-cu118` mode):
+      - `TORCH_WHEEL_INDEX=https://download.pytorch.org/whl/cu118 PYTORCH_INDEX_MODE=official-cu118 bash scripts/setup_mmvr_py310.sh`
 
 ### mmVR dataset
 

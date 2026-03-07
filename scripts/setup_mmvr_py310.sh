@@ -9,6 +9,7 @@ TORCH_VERSION="${TORCH_VERSION:-2.5.1}"
 TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.20.1}"
 TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.5.1}"
 TIMM_VERSION="${TIMM_VERSION:-1.0.24}"
+PYTORCH_INDEX_MODE="${PYTORCH_INDEX_MODE:-mirror}"
 TORCH_WHEEL_INDEX="${TORCH_WHEEL_INDEX:-https://download.pytorch.org/whl/cu118}"
 CAUSAL_CONV1D_WHL_URL="${CAUSAL_CONV1D_WHL_URL:-https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.6.0/causal_conv1d-1.6.0+cu118torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl}"
 MAMBA_SSM_WHL_URL="${MAMBA_SSM_WHL_URL:-https://github.com/state-spaces/mamba/releases/download/v2.3.0/mamba_ssm-2.3.0+cu118torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl}"
@@ -101,12 +102,28 @@ run_in_env python -m pip install \
   matplotlib==3.7.5 \
   h5py==3.10.0
 
-log_step "Installing PyTorch ${TORCH_VERSION} with CUDA 11.8"
-run_in_env python -m pip install \
-  --index-url "$TORCH_WHEEL_INDEX" \
-  torch=="$TORCH_VERSION" \
-  torchvision=="$TORCHVISION_VERSION" \
-  torchaudio=="$TORCHAUDIO_VERSION"
+log_step "Installing PyTorch ${TORCH_VERSION} (PYTORCH_INDEX_MODE=${PYTORCH_INDEX_MODE})"
+case "$PYTORCH_INDEX_MODE" in
+  mirror)
+    log_info "Using default pip index/mirror (no --index-url override)"
+    run_in_env python -m pip install \
+      torch=="$TORCH_VERSION" \
+      torchvision=="$TORCHVISION_VERSION" \
+      torchaudio=="$TORCHAUDIO_VERSION"
+    ;;
+  official-cu118)
+    log_info "Using official PyTorch wheel index: $TORCH_WHEEL_INDEX"
+    run_in_env python -m pip install \
+      --index-url "$TORCH_WHEEL_INDEX" \
+      torch=="$TORCH_VERSION" \
+      torchvision=="$TORCHVISION_VERSION" \
+      torchaudio=="$TORCHAUDIO_VERSION"
+    ;;
+  *)
+    echo "Invalid PYTORCH_INDEX_MODE: $PYTORCH_INDEX_MODE (expected: mirror or official-cu118)" >&2
+    exit 1
+    ;;
+esac
 
 log_step "Installing Python requirements"
 run_in_env python -m pip install -r "$REPO_ROOT/requirements_py310.txt"
