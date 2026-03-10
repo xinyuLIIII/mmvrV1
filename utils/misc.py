@@ -587,6 +587,11 @@ def log_save(model_name, writer, logging, epoch, loss_summary, metric_summary, c
     print("loss['kpt']:", round(loss_summary.get('loss_dict', {}).get('loss_kpt', 0.0), 4))
     print("loss['cls']:", round(loss_summary.get('loss_dict', {}).get('loss_ce', 0.0), 4))
     print("class_error:", round(loss_summary.get('loss_dict', {}).get('class_error', 0.0), 4))
+    runtime_summary = loss_summary.get('runtime', {})
+    if runtime_summary:
+        print("data_time:", round(runtime_summary.get('data_time', 0.0), 4))
+        print("step_time:", round(runtime_summary.get('step_time', 0.0), 4))
+        print("samples_per_sec:", round(runtime_summary.get('samples_per_sec', 0.0), 4))
     print(f"{'Training' if mode else 'Test'} accuracy:", current_accuracy)
     _print_pose_metrics(metric_summary)
     print("best MPJPE:", best_mpjpe, " and acc:", best_acc)
@@ -597,6 +602,9 @@ def log_save(model_name, writer, logging, epoch, loss_summary, metric_summary, c
         'loss_kpt': round(loss_summary.get('loss_dict', {}).get('loss_kpt', 0.0), 4),
         'loss_cls': round(loss_summary.get('loss_dict', {}).get('loss_ce', 0.0), 4),
         'class_error': round(loss_summary.get('loss_dict', {}).get('class_error', 0.0), 4),
+        'data_time': round(runtime_summary.get('data_time', 0.0), 4),
+        'step_time': round(runtime_summary.get('step_time', 0.0), 4),
+        'samples_per_sec': round(runtime_summary.get('samples_per_sec', 0.0), 4),
         'Training_accuracy': current_accuracy,
         'best_MPJPE': best_mpjpe,
         'best_acc': best_acc,
@@ -608,6 +616,9 @@ def log_save(model_name, writer, logging, epoch, loss_summary, metric_summary, c
     writer.add_scalar(f'Loss/{split}_total_loss', params['loss'], epoch + 1)
     writer.add_scalar(f'Loss/{split}_loss_kpt', params['loss_kpt'], epoch + 1)
     writer.add_scalar(f'Loss/{split}_loss_cls', params['loss_cls'], epoch + 1)
+    writer.add_scalar(f'Runtime/{split}_data_time', params['data_time'], epoch + 1)
+    writer.add_scalar(f'Runtime/{split}_step_time', params['step_time'], epoch + 1)
+    writer.add_scalar(f'Runtime/{split}_samples_per_sec', params['samples_per_sec'], epoch + 1)
     writer.add_scalar('Accuracy/class_error', params['class_error'], epoch + 1)
     writer.add_scalar(f'Accuracy/{split}_accuracy', params['Training_accuracy'], epoch + 1)
     writer.add_scalar(f'Accuracy/{split}_MPJPE', params['MPJPE'], epoch + 1)

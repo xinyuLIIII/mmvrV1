@@ -1,6 +1,6 @@
-from collections import defaultdict
 from contextlib import nullcontext
 import os
+import time
 
 import torch
 
@@ -75,25 +75,35 @@ def move_targets_to_device(targets, device):
 class EpochLossTracker:
     def __init__(self):
         self.total_weight = 0
-        self.total_loss_sum = 0.0
-        self.loss_sums = defaultdict(float)
+        self.total_loss_sum = None
+        self.loss_sums = {}
 
     def update(self, total_loss, loss_dict, weight=1):
         if weight <= 0:
             return
         self.total_weight += weight
-        self.total_loss_sum += float(total_loss.detach().item()) * weight
+        total_loss_sum = total_loss.detach().to(dtype=torch.float64) * weight
+        if self.total_loss_sum is None:
+            self.total_loss_sum = total_loss_sum
+        else:
+            self.total_loss_sum = self.total_loss_sum + total_loss_sum
         for key, value in loss_dict.items():
-            self.loss_sums[key] += float(value.detach().item()) * weight
+            loss_value_sum = value.detach().to(dtype=torch.float64) * weight
+            if key not in self.loss_sums:
+                self.loss_sums[key] = loss_value_sum
+            else:
+                self.loss_sums[key] = self.loss_sums[key] + loss_value_sum
 
     def summary(self):
         if self.total_weight == 0:
-            return {'loss': 0.0, 'loss_dict': {}}
+            return {'loss': 0.0, 'loss_dict': {}, 'runtime': {}}
+        weight = float(self.total_weight)
         return {
-            'loss': self.total_loss_sum / self.total_weight,
+            'loss': float((self.total_loss_sum / weight).cpu().item()),
             'loss_dict': {
-                key: value / self.total_weight for key, value in sorted(self.loss_sums.items())
+                key: float((value / weight).cpu().item()) for key, value in sorted(self.loss_sums.items())
             },
+            'runtime': {},
         }
 
 
@@ -131,14 +141,22 @@ def run_pose_epoch(
 
     train_num_steps = len(data_loader)
     grad_accum_steps = max(1, grad_accum_steps)
+    total_data_time = 0.0
+    total_step_time = 0.0
+    total_samples = 0
 
     from tqdm import tqdm
 
+    next_data_start = time.perf_counter()
     for step, (samples, imu, target) in enumerate(tqdm(data_loader)):
+        data_ready = time.perf_counter()
+        total_data_time += data_ready - next_data_start
+        step_start = data_ready
         samples = samples.to(device, non_blocking=True)
         imu = imu.to(device, non_blocking=True)
         target = move_targets_to_device(target, device)
         batch_size = samples.shape[0]
+        total_samples += int(batch_size)
         grad_context = nullcontext() if is_train else torch.no_grad()
         with grad_context:
             with autocast_context(amp_device_type, enabled=amp_enabled):
@@ -149,20 +167,27 @@ def run_pose_epoch(
                 weight_dict = criterion.weight_dict
                 losses = sum(loss_dict[key] * weight_dict[key] for key in loss_dict.keys() if key in weight_dict)
         loss_tracker.update(losses, loss_dict, weight=batch_size)
-        if not is_train:
-            continue
+        if is_train:
+            losses_for_backward = losses / grad_accum_steps
+            scaler.scale(losses_for_backward).backward()
+            should_step = ((step + 1) % grad_accum_steps == 0) or ((step + 1) == train_num_steps)
+            if should_step:
+                if clip_max_norm and clip_max_norm > 0:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), clip_max_norm)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+        total_step_time += time.perf_counter() - step_start
+        next_data_start = time.perf_counter()
 
-        losses_for_backward = losses / grad_accum_steps
-        scaler.scale(losses_for_backward).backward()
-        should_step = ((step + 1) % grad_accum_steps == 0) or ((step + 1) == train_num_steps)
-        if not should_step:
-            continue
-        if clip_max_norm and clip_max_norm > 0:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), clip_max_norm)
-        scaler.step(optimizer)
-        scaler.update()
-        optimizer.zero_grad(set_to_none=True)
+    runtime_summary = {
+        'data_time': total_data_time / train_num_steps if train_num_steps else 0.0,
+        'step_time': total_step_time / train_num_steps if train_num_steps else 0.0,
+        'samples_per_sec': total_samples / total_step_time if total_step_time > 0 else 0.0,
+    }
 
     mem_summary = mem_stats.summary() if mem_stats is not None else None
-    return loss_tracker.summary(), criterion.get_epoch_metrics(), mem_summary
+    loss_summary = loss_tracker.summary()
+    loss_summary['runtime'] = runtime_summary
+    return loss_summary, criterion.get_epoch_metrics(), mem_summary

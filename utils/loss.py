@@ -70,16 +70,20 @@ class SetCriterion(nn.Module):
         # self.register_buffer('empty_weight_id', empty_weight_id)
 
     def reset_epoch_stats(self):
-        self.correct_num = 0
+        self.correct_num = None
         self.class_count = 0
-        self.metric_sums = {name: 0.0 for name in self.METRIC_NAMES}
+        self.metric_sums = {name: None for name in self.METRIC_NAMES}
         self.metric_counts = {name: 0 for name in self.METRIC_NAMES}
         self.conf_matrix = [[0 for _ in range(self.num_classes)] for _ in range(self.num_classes)]
 
     def _update_metric(self, name, values):
         if values.numel() == 0:
             return
-        self.metric_sums[name] += float(values.detach().sum().item())
+        values_sum = values.detach().sum(dtype=torch.float64)
+        if self.metric_sums[name] is None:
+            self.metric_sums[name] = values_sum
+        else:
+            self.metric_sums[name] = self.metric_sums[name] + values_sum
         self.metric_counts[name] += int(values.numel())
 
     def _update_conf_matrix(self, pred, truth):
@@ -90,12 +94,14 @@ class SetCriterion(nn.Module):
 
     def get_epoch_metrics(self):
         metrics = {
-            name: (self.metric_sums[name] / self.metric_counts[name]) if self.metric_counts[name] else 0.0
+            name: float((self.metric_sums[name] / self.metric_counts[name]).cpu().item())
+            if self.metric_counts[name] and self.metric_sums[name] is not None else 0.0
             for name in self.METRIC_NAMES
         }
-        accuracy = 100.0 * float(self.correct_num) / float(self.class_count) if self.class_count else 0.0
+        correct_num = int(self.correct_num.cpu().item()) if isinstance(self.correct_num, torch.Tensor) else int(self.correct_num or 0)
+        accuracy = 100.0 * float(correct_num) / float(self.class_count) if self.class_count else 0.0
         metrics['accuracy'] = accuracy
-        metrics['correct_num'] = self.correct_num
+        metrics['correct_num'] = correct_num
         metrics['class_count'] = self.class_count
         return metrics
 
@@ -133,9 +139,14 @@ class SetCriterion(nn.Module):
             src_class = torch.cat(src_classes_list, 0)
 
             pred_class = src_class.argmax(-1)
-            self.correct_num += int(pred_class.eq(target_classes_af_o).sum().item())
+            correct_count = pred_class.eq(target_classes_af_o).sum().detach()
+            if self.correct_num is None:
+                self.correct_num = correct_count
+            else:
+                self.correct_num = self.correct_num + correct_count
             self.class_count += int(target_classes_af_o.numel())
-            self._update_conf_matrix(pred_class, target_classes_af_o)
+            if not self.training:
+                self._update_conf_matrix(pred_class, target_classes_af_o)
             losses['class_error'] = 100 - accuracy(src_class, target_classes_af_o)[0]
         return losses
 
@@ -315,7 +326,7 @@ class SetCriterion(nn.Module):
         num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device)
         '''if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_boxes)'''
-        num_boxes = torch.clamp(num_boxes / get_world_size(), min=1).item()
+        num_boxes = torch.clamp(num_boxes / get_world_size(), min=1)
         # Compute all the requested losses
         losses = {}
         for loss in self.losses:

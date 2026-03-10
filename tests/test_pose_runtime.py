@@ -51,6 +51,7 @@ class TrainRuntimeTests(unittest.TestCase):
 
         self.assertAlmostEqual(summary['loss'], (2.0 * 2 + 6.0) / 3)
         self.assertAlmostEqual(summary['loss_dict']['loss_kpt'], (4.0 * 2 + 10.0) / 3)
+        self.assertEqual(summary['runtime'], {})
 
     def test_maybe_compile_model_falls_back_to_eager(self):
         from utils.train_runtime import maybe_compile_model
@@ -80,8 +81,58 @@ class TrainRuntimeTests(unittest.TestCase):
         summary = criterion.get_epoch_metrics()
         self.assertEqual(summary['MPJPE'], 2.0)
         self.assertEqual(summary['accuracy'], 75.0)
+        self.assertEqual(summary['correct_num'], 3)
         self.assertEqual(criterion.conf_matrix[1][0], 1)
         self.assertEqual(criterion.conf_matrix[2][2], 1)
+
+    def test_run_pose_epoch_records_runtime_summary(self):
+        from utils.train_runtime import create_grad_scaler, run_pose_epoch
+
+        class DummyModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.scale = nn.Parameter(torch.tensor(1.0))
+
+            def forward(self, samples, imu):
+                return {'prediction': (samples + imu) * self.scale}
+
+        class DummyCriterion(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight_dict = {'loss_main': 1.0}
+
+            def forward(self, outputs, targets):
+                loss = outputs['prediction'].mean()
+                return {'loss_main': loss}
+
+            def get_epoch_metrics(self):
+                return {'MPJPE': 0.0, 'accuracy': 0.0}
+
+        samples = torch.ones(4, 2, 3)
+        imu = torch.ones(4, 2, 3)
+        targets = [{'dummy': torch.tensor(1)} for _ in range(4)]
+        data_loader = [
+            (samples[:2], imu[:2], targets[:2]),
+            (samples[2:], imu[2:], targets[2:]),
+        ]
+
+        model = DummyModel()
+        loss_summary, metric_summary, mem_summary = run_pose_epoch(
+            model,
+            DummyCriterion(),
+            data_loader,
+            torch.device('cpu'),
+            'cpu',
+            False,
+            optimizer=torch.optim.SGD(model.parameters(), lr=0.1),
+            scaler=create_grad_scaler('cpu', enabled=False),
+        )
+
+        self.assertIn('runtime', loss_summary)
+        self.assertGreaterEqual(loss_summary['runtime']['data_time'], 0.0)
+        self.assertGreater(loss_summary['runtime']['samples_per_sec'], 0.0)
+        self.assertEqual(metric_summary['MPJPE'], 0.0)
+        self.assertIsNone(mem_summary)
 
 
 class ConfigFlagTests(unittest.TestCase):
@@ -98,6 +149,15 @@ class ConfigFlagTests(unittest.TestCase):
 
             disabled_module = self._load_config(module_name, ['--no_backbone_pretrain'])
             self.assertFalse(disabled_module.args.backbone_pretrain)
+
+    def test_attn_bilstm_defaults_enable_throughput_friendly_settings(self):
+        module = self._load_config('config_attn_bilstm', [])
+
+        self.assertEqual(module.args.val_batch_size, 8)
+        self.assertEqual(module.args.num_workers, 8)
+        self.assertEqual(module.args.prefetch_factor, 4)
+        self.assertFalse(module.args.amp)
+        self.assertTrue(module.args.persistent_workers)
 
 
 if __name__ == '__main__':
