@@ -1,4 +1,5 @@
 import importlib
+from pathlib import Path
 import sys
 import types
 from types import SimpleNamespace
@@ -6,9 +7,14 @@ from types import SimpleNamespace
 import torch
 from torch import nn
 
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 
 def _load_mamba_module(monkeypatch, install_stub):
     sys.modules.pop('models.mmVR_Mamba', None)
+    monkeypatch.setattr(sys, 'argv', ['test_mamba_model.py'])
     if install_stub:
         stub = types.ModuleType('mamba_ssm')
 
@@ -23,7 +29,7 @@ def _load_mamba_module(monkeypatch, install_stub):
         stub.Mamba = DummyMamba
         monkeypatch.setitem(sys.modules, 'mamba_ssm', stub)
     else:
-        monkeypatch.delitem(sys.modules, 'mamba_ssm', raising=False)
+        monkeypatch.setitem(sys.modules, 'mamba_ssm', None)
     return importlib.import_module('models.mmVR_Mamba')
 
 

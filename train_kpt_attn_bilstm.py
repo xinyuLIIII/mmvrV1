@@ -6,10 +6,17 @@ import config_attn_bilstm as config
 from tensorboardX import SummaryWriter
 from models.mmVR_AttnBiLSTM import build_model
 from utils import misc
+from utils.train_runtime import (
+    autocast_context,
+    configure_runtime,
+    create_grad_scaler,
+    get_amp_settings,
+    maybe_compile_model,
+    resolve_device,
+    unwrap_model,
+)
 import os
 import json
-
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 
 def _write_mem_stats(writer, summary, split, epoch, save_dir):
@@ -25,17 +32,19 @@ if __name__ == '__main__':
     args = config.args
     save_path = './experiments/'
     model_name = 'train_attn_bilstm'
-    torch.backends.cudnn.benchmark = True
+    device = resolve_device(args.device)
+    configure_runtime(device, args.matmul_precision)
     if model_name != 'test':
         if not os.path.exists('./experiments/param/' + model_name + '/'):
             os.makedirs('./experiments/conf_matrix/' + model_name)
             os.makedirs('./experiments/weights/' + model_name)
             os.makedirs('./experiments/savept/' + model_name)
             os.makedirs('./experiments/param/' + model_name)
-    device = torch.device(args.device)
-    amp_enabled = False
-    if args.amp:
-        print('AMP disabled in train_kpt_attn_bilstm for numerical stability.')
+    amp_enabled, amp_device_type = get_amp_settings(device, args.amp)
+    if args.amp and not amp_enabled:
+        print(f'AMP requested, but device {device} does not support CUDA AMP. Running without AMP.')
+    else:
+        print(f'AMP enabled: {amp_enabled}')
 
     train_dataset = build_dataset(args.dataset_root, args.mode)
     train_loader_kwargs = {
@@ -76,6 +85,7 @@ if __name__ == '__main__':
     print('train_size: ', train_size)
     print('test_size: ', test_size)
     model, criterion = build_model(args)
+    model = model.to(device)
     grad_accum_steps = max(1, args.grad_accum_steps)
     if grad_accum_steps != args.grad_accum_steps:
         print(f'Adjusted grad_accum_steps from {args.grad_accum_steps} to {grad_accum_steps}.')
@@ -95,6 +105,7 @@ if __name__ == '__main__':
         )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=effective_lr, weight_decay=args.weight_decay)
+    model = maybe_compile_model(model, args.compile)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_drop, gamma=0.5)
     train_logger, test_logger = misc.create_log(save_path + model_name)
     train_writer = SummaryWriter('logs/' + model_name + '/train')
@@ -107,8 +118,7 @@ if __name__ == '__main__':
     best_mpjpe_test = 1000.0
     best_acc_test = 0.0
     temp_test = 0
-    model = model.to(device)
-    scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
+    scaler = create_grad_scaler(amp_device_type, enabled=amp_enabled)
 
     for epoch in range(args.epoch):
         misc.criterion_init(criterion)
@@ -125,7 +135,7 @@ if __name__ == '__main__':
             samples = samples.to(device, non_blocking=True)
             imu = imu.to(device, non_blocking=True)
             target = [{key: value.to(device, non_blocking=True) for key, value in item.items()} for item in target]
-            with torch.cuda.amp.autocast(enabled=amp_enabled):
+            with autocast_context(amp_device_type, enabled=amp_enabled):
                 out = model(samples, imu)
                 if mem_stats_active and 'pose_memory' in out:
                     train_mem_stats.update(out['pose_memory'])
@@ -166,7 +176,7 @@ if __name__ == '__main__':
                 target = [{key: value.to(device, non_blocking=True) for key, value in item.items()} for item in target]
                 samples = samples.to(device, non_blocking=True)
                 imu = imu.to(device, non_blocking=True)
-                with torch.cuda.amp.autocast(enabled=amp_enabled):
+                with autocast_context(amp_device_type, enabled=amp_enabled):
                     out = model(samples, imu)
                     if mem_stats_active and 'pose_memory' in out:
                         test_mem_stats.update(out['pose_memory'])
@@ -191,7 +201,7 @@ if __name__ == '__main__':
             _write_mem_stats(train_writer, train_mem_stats.summary(), 'train', epoch, mem_stats_dir)
             _write_mem_stats(test_writer, test_mem_stats.summary(), 'test', epoch, mem_stats_dir)
         if is_save:
-            torch.save(model.state_dict(), f'./experiments/param/{model_name}/best_test_mpjpe.pth')
+            torch.save(unwrap_model(model).state_dict(), f'./experiments/param/{model_name}/best_test_mpjpe.pth')
 
     train_writer.close()
     test_writer.close()

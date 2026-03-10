@@ -103,16 +103,36 @@ class mmVR_Transformer(nn.Module):
         encoder_norm_imu = nn.LayerNorm(d_model) if normalize_before else None
         self.encoder_imu = TransformerEncoder(encoder_layer_imu, num_encoder_layers, encoder_norm_imu)
 
-        posedecoder_layer = TransformerPoseDecoderLayer(d_model, nhead, dim_feedforward,
-                                                        dropout, activation, normalize_before).cuda()
-        posedecoder_norm = nn.LayerNorm(d_model).cuda()
-        self.posedecoder = TransformerPoseDecoder(posedecoder_layer, num_decoder_layers, posedecoder_norm,
-                                                  return_intermediate=return_intermediate_dec).cuda()
+        posedecoder_layer = TransformerPoseDecoderLayer(
+            d_model,
+            nhead,
+            dim_feedforward,
+            dropout,
+            activation,
+            normalize_before,
+        )
+        posedecoder_norm = nn.LayerNorm(d_model)
+        self.posedecoder = TransformerPoseDecoder(
+            posedecoder_layer,
+            num_decoder_layers,
+            posedecoder_norm,
+            return_intermediate=return_intermediate_dec,
+        )
 
-        temporaldecoder_layer = TransformerTemporalDecoderLayer(d_model, nhead, dim_feedforward,
-                                                                dropout, activation, normalize_before).cuda()
-        temporaldecoder_norm = nn.LayerNorm(d_model).cuda()
-        self.temporaldecoder = TransformerTemporalDecoder(temporaldecoder_layer, num_frames, temporaldecoder_norm).cuda()
+        temporaldecoder_layer = TransformerTemporalDecoderLayer(
+            d_model,
+            nhead,
+            dim_feedforward,
+            dropout,
+            activation,
+            normalize_before,
+        )
+        temporaldecoder_norm = nn.LayerNorm(d_model)
+        self.temporaldecoder = TransformerTemporalDecoder(
+            temporaldecoder_layer,
+            num_frames,
+            temporaldecoder_norm,
+        )
         # self.pos_embed = nn.Parameter(torch.zeros((30, 32, self.hidden_dim)))
         self.posequery_embed = nn.Embedding(30, self.hidden_dim)
         self.temporalquery_embed = nn.Embedding(num_queries, self.hidden_dim)

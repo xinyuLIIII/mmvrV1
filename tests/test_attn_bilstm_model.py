@@ -1,8 +1,13 @@
 import importlib
+from pathlib import Path
 import sys
 from types import SimpleNamespace
 
 import torch
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def _load_attn_bilstm_module(monkeypatch):

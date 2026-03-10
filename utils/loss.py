@@ -222,19 +222,6 @@ class SetCriterion(nn.Module):
             losses['label_error'] = 100 - accuracy(src_labels[idx], target_classes_o)[0]
         return losses
 
-        # print(len(targets))
-        target_label = [int(v['label']) for v in targets]
-        target_label = torch.tensor(target_label).cuda()
-        pred_label = outputs['pred_cls'].data.max(1)[1]
-        losses = {}
-        loss_label = F.cross_entropy(outputs['pred_cls'], target_label)
-        losses['loss_label'] = loss_label
-        # print('correct_num: ', int(pred_label.eq(target_label).sum()))
-        self.conf_matrix = self.get_conf_matrix(pred_label, target_label, self.conf_matrix)
-        self.correct_num += pred_label.eq(target_label).sum()
-        # print('cur_num: ', int(self.correct_num))
-        return losses
-
     def _get_src_permutation_idx(self, indices):
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
         src_idx = torch.cat([src for (src, _) in indices])
