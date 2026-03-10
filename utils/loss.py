@@ -14,6 +14,34 @@ class SetCriterion(nn.Module):
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
 
+    METRIC_NAMES = (
+        'MPJPE',
+        'MPJDLE',
+        'MPJDLE_h',
+        'MPJDLE_v',
+        'MPJDLE_d',
+        'mpjpe_thumb',
+        'mpjdle_h_thumb',
+        'mpjdle_v_thumb',
+        'mpjdle_d_thumb',
+        'mpjpe_index',
+        'mpjdle_h_index',
+        'mpjdle_v_index',
+        'mpjdle_d_index',
+        'mpjpe_middle',
+        'mpjdle_h_middle',
+        'mpjdle_v_middle',
+        'mpjdle_d_middle',
+        'mpjpe_ring',
+        'mpjdle_h_ring',
+        'mpjdle_v_ring',
+        'mpjdle_d_ring',
+        'mpjpe_pinky',
+        'mpjdle_h_pinky',
+        'mpjdle_v_pinky',
+        'mpjdle_d_pinky',
+    )
+
     def __init__(self, num_logitsclass, matcher, weight_dict, logits_eos_coef, losses, num_classes=8):
         """ Create the criterion.
         Parameters:
@@ -33,46 +61,43 @@ class SetCriterion(nn.Module):
         self.losses = losses
         empty_weight_logits = torch.ones(self.num_logitsclass + 1)
         empty_weight_logits[0] = self.logits_eos_coef
-        self.correct_num = 0
-        # self.mpjpe = 0.0
-        self.mpjpe_list = []
-        self.mpjdle_list = []
-        self.mpjdle_h_list = []
-        self.mpjdle_v_list = []
-        self.mpjdle_d_list = []
-
-        self.mpjpe_thumb_list = []
-        self.mpjdle_h_thumb_list = []
-        self.mpjdle_v_thumb_list = []
-        self.mpjdle_d_thumb_list = []
-
-        self.mpjpe_index_list = []
-        self.mpjdle_h_index_list = []
-        self.mpjdle_v_index_list = []
-        self.mpjdle_d_index_list = []
-
-        self.mpjpe_middle_list = []
-        self.mpjdle_h_middle_list = []
-        self.mpjdle_v_middle_list = []
-        self.mpjdle_d_middle_list = []
-
-        self.mpjpe_ring_list = []
-        self.mpjdle_h_ring_list = []
-        self.mpjdle_v_ring_list = []
-        self.mpjdle_d_ring_list = []
-
-        self.mpjpe_pinky_list = []
-        self.mpjdle_h_pinky_list = []
-        self.mpjdle_v_pinky_list = []
-        self.mpjdle_d_pinky_list = []
-        
         self.num_classes = num_classes
         # self.kpt = torch.Tensor()
         # empty_weight_id = torch.ones(self.num_idclass + 1)
         # empty_weight_id[0] = self.id_eos_coef
-        self.conf_matrix = [[0 for _ in range(8)] for _ in range(8)]
+        self.reset_epoch_stats()
         self.register_buffer('empty_weight_logits', empty_weight_logits)
         # self.register_buffer('empty_weight_id', empty_weight_id)
+
+    def reset_epoch_stats(self):
+        self.correct_num = 0
+        self.class_count = 0
+        self.metric_sums = {name: 0.0 for name in self.METRIC_NAMES}
+        self.metric_counts = {name: 0 for name in self.METRIC_NAMES}
+        self.conf_matrix = [[0 for _ in range(self.num_classes)] for _ in range(self.num_classes)]
+
+    def _update_metric(self, name, values):
+        if values.numel() == 0:
+            return
+        self.metric_sums[name] += float(values.detach().sum().item())
+        self.metric_counts[name] += int(values.numel())
+
+    def _update_conf_matrix(self, pred, truth):
+        pred_list = pred.detach().cpu().tolist()
+        truth_list = truth.detach().cpu().tolist()
+        for pred_idx, truth_idx in zip(pred_list, truth_list):
+            self.conf_matrix[truth_idx][pred_idx] += 1
+
+    def get_epoch_metrics(self):
+        metrics = {
+            name: (self.metric_sums[name] / self.metric_counts[name]) if self.metric_counts[name] else 0.0
+            for name in self.METRIC_NAMES
+        }
+        accuracy = 100.0 * float(self.correct_num) / float(self.class_count) if self.class_count else 0.0
+        metrics['accuracy'] = accuracy
+        metrics['correct_num'] = self.correct_num
+        metrics['class_count'] = self.class_count
+        return metrics
 
     def loss_cls(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (NLL)
@@ -107,6 +132,10 @@ class SetCriterion(nn.Module):
                 src_classes_list.append(src_classes)
             src_class = torch.cat(src_classes_list, 0)
 
+            pred_class = src_class.argmax(-1)
+            self.correct_num += int(pred_class.eq(target_classes_af_o).sum().item())
+            self.class_count += int(target_classes_af_o.numel())
+            self._update_conf_matrix(pred_class, target_classes_af_o)
             losses['class_error'] = 100 - accuracy(src_class, target_classes_af_o)[0]
         return losses
 
@@ -146,38 +175,7 @@ class SetCriterion(nn.Module):
         target_kpt = torch.cat(target_kpt_list_o, 0)
 
         loss_kpt = F.mse_loss(src_kpt, target_kpt, reduction='none')
-        result = self.calc_mpjpe(src_kpt, target_kpt)
-
-        self.mpjpe = self.mpjpe_list.append(result[0])
-        self.mpjdle = self.mpjdle_list.append(result[1])
-        self.mpjdle_h = self.mpjdle_h_list.append(result[2])
-        self.mpjdle_v = self.mpjdle_v_list.append(result[3])
-        self.mpjdle_d = self.mpjdle_d_list.append(result[4])
-
-        self.mpjpe_thumb = self.mpjpe_thumb_list.append(result[5])
-        self.mpjdle_h_thumb = self.mpjdle_h_thumb_list.append(result[6])
-        self.mpjdle_v_thumb = self.mpjdle_v_thumb_list.append(result[7])
-        self.mpjdle_d_thumb = self.mpjdle_d_thumb_list.append(result[8])
-
-        self.mpjpe_index = self.mpjpe_index_list.append(result[9])
-        self.mpjdle_h_index = self.mpjdle_h_index_list.append(result[10])
-        self.mpjdle_v_index = self.mpjdle_v_index_list.append(result[11])
-        self.mpjdle_d_index = self.mpjdle_d_index_list.append(result[12])
-
-        self.mpjpe_middle = self.mpjpe_middle_list.append(result[13])
-        self.mpjdle_h_middle = self.mpjdle_h_middle_list.append(result[14])
-        self.mpjdle_v_middle = self.mpjdle_v_middle_list.append(result[15])
-        self.mpjdle_d_middle = self.mpjdle_d_middle_list.append(result[16])
-
-        self.mpjpe_ring = self.mpjpe_ring_list.append(result[17])
-        self.mpjdle_h_ring = self.mpjdle_h_ring_list.append(result[18])
-        self.mpjdle_v_ring = self.mpjdle_v_ring_list.append(result[19])
-        self.mpjdle_d_ring = self.mpjdle_d_ring_list.append(result[20])
-
-        self.mpjpe_pinky = self.mpjpe_pinky_list.append(result[21])
-        self.mpjdle_h_pinky = self.mpjdle_h_pinky_list.append(result[22])
-        self.mpjdle_v_pinky = self.mpjdle_v_pinky_list.append(result[23])
-        self.mpjdle_d_pinky = self.mpjdle_d_pinky_list.append(result[24])
+        self.calc_mpjpe(src_kpt, target_kpt)
 
         losses = {}
         losses['loss_kpt'] = loss_kpt.sum() / num_kpt
@@ -234,67 +232,34 @@ class SetCriterion(nn.Module):
         return batch_idx, tgt_idx
 
     def calc_mpjpe(self, output_kpt, target_kpt):
-        calc_joint = True
-        result = []
         new_pred = output_kpt.flatten(0, 1).reshape(-1, 21, 3)
         real = target_kpt.flatten(0, 1).reshape(-1, 21, 3)
         pjpe = torch.sqrt(torch.pow(real - new_pred, 2).sum(-1)) * 1000
         pjdle = torch.abs(real - new_pred) * 1000
-        pjdle_h = torch.abs(real[:,:,0] - new_pred[:,:,0]) * 1000
-        pjdle_v = torch.abs(real[:,:,1] - new_pred[:,:,1]) * 1000
-        pjdle_d = torch.abs(real[:,:,2] - new_pred[:,:,2]) * 1000
-        result.append(pjpe.mean().cpu())
-        result.append(pjdle.mean().cpu())
-        result.append(pjdle_h.mean().cpu())
-        result.append(pjdle_v.mean().cpu())
-        result.append(pjdle_d.mean().cpu())
-        if calc_joint:
-            pjpe_thumb = torch.sqrt(torch.pow(real[:,1:5,:] - new_pred[:,1:5,:], 2).sum(-1)) * 1000
-            pjdle_h_thumb = torch.abs(real[:,1:5,0] - new_pred[:,1:5,0]) * 1000
-            pjdle_v_thumb = torch.abs(real[:,1:5,1] - new_pred[:,1:5,1]) * 1000
-            pjdle_d_thumb = torch.abs(real[:,1:5,2] - new_pred[:,1:5,2]) * 1000
-            result.append(pjpe_thumb.mean().cpu())
-            result.append(pjdle_h_thumb.mean().cpu())
-            result.append(pjdle_v_thumb.mean().cpu())
-            result.append(pjdle_d_thumb.mean().cpu())
+        pjdle_h = torch.abs(real[:, :, 0] - new_pred[:, :, 0]) * 1000
+        pjdle_v = torch.abs(real[:, :, 1] - new_pred[:, :, 1]) * 1000
+        pjdle_d = torch.abs(real[:, :, 2] - new_pred[:, :, 2]) * 1000
 
-            pjpe_index = torch.sqrt(torch.pow(real[:,5:9,:] - new_pred[:,5:9,:], 2).sum(-1)) * 1000
-            pjdle_h_index = torch.abs(real[:,5:9,0] - new_pred[:,5:9,0]) * 1000
-            pjdle_v_index = torch.abs(real[:,5:9,1] - new_pred[:,5:9,1]) * 1000
-            pjdle_d_index = torch.abs(real[:,5:9,2] - new_pred[:,5:9,2]) * 1000
-            result.append(pjpe_index.mean().cpu())
-            result.append(pjdle_h_index.mean().cpu())
-            result.append(pjdle_v_index.mean().cpu())
-            result.append(pjdle_d_index.mean().cpu())
+        self._update_metric('MPJPE', pjpe)
+        self._update_metric('MPJDLE', pjdle)
+        self._update_metric('MPJDLE_h', pjdle_h)
+        self._update_metric('MPJDLE_v', pjdle_v)
+        self._update_metric('MPJDLE_d', pjdle_d)
 
-            pjpe_middle = torch.sqrt(torch.pow(real[:,9:13,:] - new_pred[:,9:13,:], 2).sum(-1)) * 1000
-            pjdle_h_middle = torch.abs(real[:,9:13,0] - new_pred[:,9:13,0]) * 1000
-            pjdle_v_middle = torch.abs(real[:,9:13,1] - new_pred[:,9:13,1]) * 1000
-            pjdle_d_middle = torch.abs(real[:,9:13,2] - new_pred[:,9:13,2]) * 1000
-            result.append(pjpe_middle.mean().cpu())
-            result.append(pjdle_h_middle.mean().cpu())
-            result.append(pjdle_v_middle.mean().cpu())
-            result.append(pjdle_d_middle.mean().cpu())
-
-            pjpe_ring = torch.sqrt(torch.pow(real[:,13:17,:] - new_pred[:,13:17,:], 2).sum(-1)) * 1000
-            pjdle_h_ring = torch.abs(real[:,13:17,0] - new_pred[:,13:17,0]) * 1000
-            pjdle_v_ring = torch.abs(real[:,13:17,1] - new_pred[:,13:17,1]) * 1000
-            pjdle_d_ring = torch.abs(real[:,13:17,2] - new_pred[:,13:17,2]) * 1000
-            result.append(pjpe_ring.mean().cpu())
-            result.append(pjdle_h_ring.mean().cpu())
-            result.append(pjdle_v_ring.mean().cpu())
-            result.append(pjdle_d_ring.mean().cpu())
-
-            pjpe_pinky = torch.sqrt(torch.pow(real[:,17:21,:] - new_pred[:,17:21,:], 2).sum(-1)) * 1000
-            pjdle_h_pinky = torch.abs(real[:,17:21,0] - new_pred[:,17:21,0]) * 1000
-            pjdle_v_pinky = torch.abs(real[:,17:21,1] - new_pred[:,17:21,1]) * 1000
-            pjdle_d_pinky = torch.abs(real[:,17:21,2] - new_pred[:,17:21,2]) * 1000
-            result.append(pjpe_pinky.mean().cpu())
-            result.append(pjdle_h_pinky.mean().cpu())
-            result.append(pjdle_v_pinky.mean().cpu())
-            result.append(pjdle_d_pinky.mean().cpu())
-
-        return result
+        metric_slices = (
+            ('thumb', slice(1, 5)),
+            ('index', slice(5, 9)),
+            ('middle', slice(9, 13)),
+            ('ring', slice(13, 17)),
+            ('pinky', slice(17, 21)),
+        )
+        for suffix, joint_slice in metric_slices:
+            pred_slice = new_pred[:, joint_slice, :]
+            real_slice = real[:, joint_slice, :]
+            self._update_metric(f'mpjpe_{suffix}', torch.sqrt(torch.pow(real_slice - pred_slice, 2).sum(-1)) * 1000)
+            self._update_metric(f'mpjdle_h_{suffix}', torch.abs(real_slice[:, :, 0] - pred_slice[:, :, 0]) * 1000)
+            self._update_metric(f'mpjdle_v_{suffix}', torch.abs(real_slice[:, :, 1] - pred_slice[:, :, 1]) * 1000)
+            self._update_metric(f'mpjdle_d_{suffix}', torch.abs(real_slice[:, :, 2] - pred_slice[:, :, 2]) * 1000)
 
     def get_conf_matrix(self, pred, truth, conf_matrix):
         p = pred.tolist()
@@ -304,11 +269,13 @@ class SetCriterion(nn.Module):
         return conf_matrix
 
     def write_to_file(self, conf_matrix, path):
-        conf_matrix_m = conf_matrix
-        for x in range(len(conf_matrix_m)):
-            base = sum(conf_matrix_m[x])
-            for y in range(len(conf_matrix_m[0])):
-                conf_matrix_m[x][y] = format(conf_matrix_m[x][y] / base, '.2f')
+        conf_matrix_m = []
+        for row in conf_matrix:
+            base = sum(row)
+            if base == 0:
+                conf_matrix_m.append([format(0, '.2f') for _ in row])
+                continue
+            conf_matrix_m.append([format(value / base, '.2f') for value in row])
         df = pd.DataFrame(conf_matrix_m)
         df.to_csv(path + '.csv')
 

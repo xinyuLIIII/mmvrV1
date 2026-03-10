@@ -1,5 +1,4 @@
 import argparse
-import math
 parser = argparse.ArgumentParser(description='Hyper-parameters management')
 
 parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
@@ -14,7 +13,9 @@ parser.add_argument('--clip_max_norm', default=0.1, type=float,
                     help='gradient clipping max norm')
 parser.add_argument('--mode', default=True)
 parser.add_argument('--backbone_name', type=str, default='resnet18')
-parser.add_argument('--backbone_pretrain', type=bool, default=True)
+parser.add_argument('--backbone_pretrain', dest='backbone_pretrain', action='store_true')
+parser.add_argument('--no_backbone_pretrain', dest='backbone_pretrain', action='store_false')
+parser.set_defaults(backbone_pretrain=True)
 # Model parameters
 parser.add_argument('--frozen_weights', type=str, default=None,
                         help="Path to the pretrained model. If set, only the mask head will be trained")

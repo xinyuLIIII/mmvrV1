@@ -12,7 +12,6 @@ from collections import defaultdict, deque
 import datetime
 import pickle
 from typing import Optional, List
-import config
 import torch
 import torch.distributed as dist
 from torch import Tensor
@@ -538,279 +537,102 @@ def interpolate(input, size=None, scale_factor=None, mode="nearest", align_corne
         return torchvision.ops.misc.interpolate(input, size, scale_factor, mode, align_corners)
 
 
-def log_save(model_name, writer, logging, epoch, losses, loss_dict, criterion, size, best_mpjpe, best_acc, mode,
-             temp_test=0):
-    args = config.args
+POSE_METRIC_PRINT_ORDER = (
+    'MPJPE',
+    'MPJDLE',
+    'MPJDLE_h',
+    'MPJDLE_v',
+    'MPJDLE_d',
+    'mpjpe_thumb',
+    'mpjdle_h_thumb',
+    'mpjdle_v_thumb',
+    'mpjdle_d_thumb',
+    'mpjpe_index',
+    'mpjdle_h_index',
+    'mpjdle_v_index',
+    'mpjdle_d_index',
+    'mpjpe_middle',
+    'mpjdle_h_middle',
+    'mpjdle_v_middle',
+    'mpjdle_d_middle',
+    'mpjpe_ring',
+    'mpjdle_h_ring',
+    'mpjdle_v_ring',
+    'mpjdle_d_ring',
+    'mpjpe_pinky',
+    'mpjdle_h_pinky',
+    'mpjdle_v_pinky',
+    'mpjdle_d_pinky',
+)
+
+
+def _print_pose_metrics(metric_summary):
+    for name in POSE_METRIC_PRINT_ORDER:
+        print(f'{name}:', round(metric_summary.get(name, 0.0), 4))
+
+
+def log_save(model_name, writer, logging, epoch, loss_summary, metric_summary, criterion, best_mpjpe, best_acc, mode,
+             temp_test=0.0):
     print("\nepoch:", epoch + 1)
-    is_save = False
-    if mode:
-        print("------------------------------train----------------------------------------")
-        print("loss:", losses.item())
-        print("loss['kpt']:", round(loss_dict['loss_kpt'].item(), 4))
-        print("loss['cls']:", loss_dict['loss_ce'].item())
-        print("class_error:", loss_dict['class_error'].item())
-        print("Training accuracy:", round((100 * float(criterion.correct_num) / size), 4))
+    split = 'train' if mode else 'test'
+    split_title = 'train' if mode else 'test'
+    current_mpjpe = round(metric_summary.get('MPJPE', 0.0), 4)
+    current_accuracy = round(metric_summary.get('accuracy', 0.0), 4)
+    best_acc = max(best_acc, current_accuracy)
+    is_save = current_mpjpe < best_mpjpe
+    best_mpjpe = min(best_mpjpe, current_mpjpe)
 
-        print("MPJPE:", round(torch.mean(torch.stack(criterion.mpjpe_list)).item(), 4))
-        print("MPJDLE:", round(torch.mean(torch.stack(criterion.mpjdle_list)).item(), 4))
-        print("MPJDLE_h:", round(torch.mean(torch.stack(criterion.mpjdle_h_list)).item(), 4))
-        print("MPJDLE_v:", round(torch.mean(torch.stack(criterion.mpjdle_v_list)).item(), 4))
-        print("MPJDLE_d:", round(torch.mean(torch.stack(criterion.mpjdle_d_list)).item(), 4))
+    print(f"------------------------------{split_title}----------------------------------------")
+    print("loss:", round(loss_summary.get('loss', 0.0), 4))
+    print("loss['kpt']:", round(loss_summary.get('loss_dict', {}).get('loss_kpt', 0.0), 4))
+    print("loss['cls']:", round(loss_summary.get('loss_dict', {}).get('loss_ce', 0.0), 4))
+    print("class_error:", round(loss_summary.get('loss_dict', {}).get('class_error', 0.0), 4))
+    print(f"{'Training' if mode else 'Test'} accuracy:", current_accuracy)
+    _print_pose_metrics(metric_summary)
+    print("best MPJPE:", best_mpjpe, " and acc:", best_acc)
 
-        print("mpjpe_thumb:", round(torch.mean(torch.stack(criterion.mpjpe_thumb_list)).item(), 4))
-        print("mpjdle_h_thumb:", round(torch.mean(torch.stack(criterion.mpjdle_h_thumb_list)).item(), 4))
-        print("mpjdle_v_thumb:", round(torch.mean(torch.stack(criterion.mpjdle_v_thumb_list)).item(), 4))
-        print("mpjdle_d_thumb:", round(torch.mean(torch.stack(criterion.mpjdle_d_thumb_list)).item(), 4))
+    params = {
+        'epoch': epoch + 1,
+        'loss': round(loss_summary.get('loss', 0.0), 4),
+        'loss_kpt': round(loss_summary.get('loss_dict', {}).get('loss_kpt', 0.0), 4),
+        'loss_cls': round(loss_summary.get('loss_dict', {}).get('loss_ce', 0.0), 4),
+        'class_error': round(loss_summary.get('loss_dict', {}).get('class_error', 0.0), 4),
+        'Training_accuracy': current_accuracy,
+        'best_MPJPE': best_mpjpe,
+        'best_acc': best_acc,
+    }
+    for name in POSE_METRIC_PRINT_ORDER:
+        params[name] = round(metric_summary.get(name, 0.0), 4)
 
-        print("mpjpe_index:", round(torch.mean(torch.stack(criterion.mpjpe_index_list)).item(), 4))
-        print("mpjdle_h_index:", round(torch.mean(torch.stack(criterion.mpjdle_h_index_list)).item(), 4))
-        print("mpjdle_v_index:", round(torch.mean(torch.stack(criterion.mpjdle_v_index_list)).item(), 4))
-        print("mpjdle_d_index:", round(torch.mean(torch.stack(criterion.mpjdle_d_index_list)).item(), 4))
+    logging.info(params)
+    writer.add_scalar(f'Loss/{split}_total_loss', params['loss'], epoch + 1)
+    writer.add_scalar(f'Loss/{split}_loss_kpt', params['loss_kpt'], epoch + 1)
+    writer.add_scalar(f'Loss/{split}_loss_cls', params['loss_cls'], epoch + 1)
+    writer.add_scalar('Accuracy/class_error', params['class_error'], epoch + 1)
+    writer.add_scalar(f'Accuracy/{split}_accuracy', params['Training_accuracy'], epoch + 1)
+    writer.add_scalar(f'Accuracy/{split}_MPJPE', params['MPJPE'], epoch + 1)
+    writer.add_scalar(f'Accuracy/{split}_best_MPJPE', params['best_MPJPE'], epoch + 1)
+    writer.add_scalar(f'Accuracy/{split}_best_acc', params['best_acc'], epoch + 1)
 
-        print("mpjpe_middle:", round(torch.mean(torch.stack(criterion.mpjpe_middle_list)).item(), 4))
-        print("mpjdle_h_middle:", round(torch.mean(torch.stack(criterion.mpjdle_h_middle_list)).item(), 4))
-        print("mpjdle_v_middle:", round(torch.mean(torch.stack(criterion.mpjdle_v_middle_list)).item(), 4))
-        print("mpjdle_d_middle:", round(torch.mean(torch.stack(criterion.mpjdle_d_middle_list)).item(), 4))
-
-        print("mpjpe_ring:", round(torch.mean(torch.stack(criterion.mpjpe_ring_list)).item(), 4))
-        print("mpjdle_h_ring:", round(torch.mean(torch.stack(criterion.mpjdle_h_ring_list)).item(), 4))
-        print("mpjdle_v_ring:", round(torch.mean(torch.stack(criterion.mpjdle_v_ring_list)).item(), 4))
-        print("mpjdle_d_ring:", round(torch.mean(torch.stack(criterion.mpjdle_d_ring_list)).item(), 4))
-
-        print("mpjpe_pinky:", round(torch.mean(torch.stack(criterion.mpjpe_pinky_list)).item(), 4))
-        print("mpjdle_h_pinky:", round(torch.mean(torch.stack(criterion.mpjdle_h_pinky_list)).item(), 4))
-        print("mpjdle_v_pinky:", round(torch.mean(torch.stack(criterion.mpjdle_v_pinky_list)).item(), 4))
-        print("mpjdle_d_pinky:", round(torch.mean(torch.stack(criterion.mpjdle_d_pinky_list)).item(), 4))
-        
-        best_acc = max(best_acc, round((100 * float(criterion.correct_num) / size), 4))
-        print("best MPJPE:", best_mpjpe, " and acc:", best_acc)
-        params = {
-            'epoch': epoch + 1,
-            'loss': round(losses.item(), 4),
-            'loss_kpt': round(loss_dict['loss_kpt'].item(), 4),
-            'loss_cls': loss_dict['loss_ce'].item(),
-            'class_error': loss_dict['class_error'].item(),
-            'Training_accuracy': round((100 * float(criterion.correct_num) / size), 4),
-            'MPJPE': round(torch.mean(torch.stack(criterion.mpjpe_list)).item(), 4),
-            'MPJDLE': round(torch.mean(torch.stack(criterion.mpjdle_list)).item(), 4),
-            'MPJDLE_h': round(torch.mean(torch.stack(criterion.mpjdle_h_list)).item(), 4),
-            'MPJDLE_v': round(torch.mean(torch.stack(criterion.mpjdle_v_list)).item(), 4),
-            'MPJDLE_d': round(torch.mean(torch.stack(criterion.mpjdle_d_list)).item(), 4),
-
-            'mpjpe_thumb': round(torch.mean(torch.stack(criterion.mpjpe_thumb_list)).item(), 4),
-            'mpjdle_h_thumb': round(torch.mean(torch.stack(criterion.mpjdle_h_thumb_list)).item(), 4),
-            'mpjdle_v_thumb': round(torch.mean(torch.stack(criterion.mpjdle_v_thumb_list)).item(), 4),
-            'mpjdle_d_thumb': round(torch.mean(torch.stack(criterion.mpjdle_d_thumb_list)).item(), 4),
-
-            'mpjpe_index': round(torch.mean(torch.stack(criterion.mpjpe_index_list)).item(), 4),
-            'mpjdle_h_index': round(torch.mean(torch.stack(criterion.mpjdle_h_index_list)).item(), 4),
-            'mpjdle_v_index': round(torch.mean(torch.stack(criterion.mpjdle_v_index_list)).item(), 4),
-            'mpjdle_d_index': round(torch.mean(torch.stack(criterion.mpjdle_d_index_list)).item(), 4),
-
-            'mpjpe_middle': round(torch.mean(torch.stack(criterion.mpjpe_middle_list)).item(), 4),
-            'mpjdle_h_middle': round(torch.mean(torch.stack(criterion.mpjdle_h_middle_list)).item(), 4),
-            'mpjdle_v_middle': round(torch.mean(torch.stack(criterion.mpjdle_v_middle_list)).item(), 4),
-            'mpjdle_d_middle': round(torch.mean(torch.stack(criterion.mpjdle_d_middle_list)).item(), 4),
-
-            'mpjpe_ring': round(torch.mean(torch.stack(criterion.mpjpe_ring_list)).item(), 4),
-            'mpjdle_h_ring': round(torch.mean(torch.stack(criterion.mpjdle_h_ring_list)).item(), 4),
-            'mpjdle_v_ring': round(torch.mean(torch.stack(criterion.mpjdle_v_ring_list)).item(), 4),
-            'mpjdle_d_ring': round(torch.mean(torch.stack(criterion.mpjdle_d_ring_list)).item(), 4),
-
-            'mpjpe_pinky': round(torch.mean(torch.stack(criterion.mpjpe_pinky_list)).item(), 4),
-            'mpjdle_h_pinky': round(torch.mean(torch.stack(criterion.mpjdle_h_pinky_list)).item(), 4),
-            'mpjdle_v_pinky': round(torch.mean(torch.stack(criterion.mpjdle_v_pinky_list)).item(), 4),
-            'mpjdle_d_pinky': round(torch.mean(torch.stack(criterion.mpjdle_d_pinky_list)).item(), 4),
-            'best_acc': best_acc,
-        }
-
-        if round(torch.mean(torch.stack(criterion.mpjpe_list)).item(), 4) < best_mpjpe:
-            is_save = True
-            params['best_MPJDLE'] = round(torch.mean(torch.stack(criterion.mpjdle_list)).item(), 4)
-            params['best_MPJDLE_h'] = round(torch.mean(torch.stack(criterion.mpjdle_h_list)).item(), 4)
-            params['best_MPJDLE_v'] = round(torch.mean(torch.stack(criterion.mpjdle_v_list)).item(), 4)
-            params['best_MPJDLE_d'] = round(torch.mean(torch.stack(criterion.mpjdle_d_list)).item(), 4)
-
-            params['best_mpjpe_thumb'] = round(torch.mean(torch.stack(criterion.mpjpe_thumb_list)).item(), 4)
-            params['best_mpjpe_h_thumb'] = round(torch.mean(torch.stack(criterion.mpjdle_h_thumb_list)).item(), 4)
-            params['best_mpjpe_v_thumb'] = round(torch.mean(torch.stack(criterion.mpjdle_v_thumb_list)).item(), 4)
-            params['best_mpjpe_d_thumb'] = round(torch.mean(torch.stack(criterion.mpjdle_d_thumb_list)).item(), 4)
-
-            params['best_mpjpe_index'] = round(torch.mean(torch.stack(criterion.mpjpe_index_list)).item(), 4)
-            params['best_mpjpe_h_index'] = round(torch.mean(torch.stack(criterion.mpjdle_h_index_list)).item(), 4)
-            params['best_mpjpe_v_index'] = round(torch.mean(torch.stack(criterion.mpjdle_v_index_list)).item(), 4)
-            params['best_mpjpe_d_index'] = round(torch.mean(torch.stack(criterion.mpjdle_d_index_list)).item(), 4)
-
-            params['best_mpjpe_middle'] = round(torch.mean(torch.stack(criterion.mpjpe_middle_list)).item(), 4)
-            params['best_mpjpe_h_middle'] = round(torch.mean(torch.stack(criterion.mpjdle_h_middle_list)).item(), 4)
-            params['best_mpjpe_v_middle'] = round(torch.mean(torch.stack(criterion.mpjdle_v_middle_list)).item(), 4)
-            params['best_mpjpe_d_middle'] = round(torch.mean(torch.stack(criterion.mpjdle_d_middle_list)).item(), 4)
-
-            params['best_mpjpe_ring'] = round(torch.mean(torch.stack(criterion.mpjpe_ring_list)).item(), 4)
-            params['best_mpjpe_h_ring'] = round(torch.mean(torch.stack(criterion.mpjdle_h_ring_list)).item(), 4)
-            params['best_mpjpe_v_ring'] = round(torch.mean(torch.stack(criterion.mpjdle_v_ring_list)).item(), 4)
-            params['best_mpjpe_d_ring'] = round(torch.mean(torch.stack(criterion.mpjdle_d_ring_list)).item(), 4)
-
-            params['best_mpjpe_pinky'] = round(torch.mean(torch.stack(criterion.mpjpe_pinky_list)).item(), 4)
-            params['best_mpjpe_h_pinky'] = round(torch.mean(torch.stack(criterion.mpjdle_h_pinky_list)).item(), 4)
-            params['best_mpjpe_v_pinky'] = round(torch.mean(torch.stack(criterion.mpjdle_v_pinky_list)).item(), 4)
-            params['best_mpjpe_d_pinky'] = round(torch.mean(torch.stack(criterion.mpjdle_d_pinky_list)).item(), 4)
-
-        best_mpjpe = min(best_mpjpe, round(torch.mean(torch.stack(criterion.mpjpe_list)).item(), 4))
-        params['best_MPJPE'] = best_mpjpe
-        logging.info(params)
-        writer.add_scalar('Loss/train_total_loss', params['loss'], epoch + 1)
-        writer.add_scalar('Loss/train_loss_kpt', params['loss_kpt'], epoch + 1)
-        writer.add_scalar('Loss/train_loss_cls', params['loss_cls'], epoch + 1)
-        writer.add_scalar('Accuracy/class_error', params['class_error'], epoch + 1)
-        writer.add_scalar('Accuracy/train_accuracy', params['Training_accuracy'], epoch + 1)
-        writer.add_scalar('Accuracy/train_MPJPE', params['MPJPE'], epoch + 1)
-        writer.add_scalar('Accuracy/train_best_MPJPE', params['best_MPJPE'], epoch + 1)
-        writer.add_scalar('Accuracy/train_best_acc', params['best_acc'], epoch + 1)
-    else:
-        print("------------------------------test----------------------------------------")
-        print("loss:", round(losses.item(), 4))
-        print("loss['kpt']:", round(loss_dict['loss_kpt'].item(), 4))
-        print("loss['cls']:", loss_dict['loss_ce'].item())
-        print("class_error:", loss_dict['class_error'].item())
-        print("Test accuracy:", round((100 * float(criterion.correct_num) / size), 4))
-        print("MPJPE:", round(torch.mean(torch.stack(criterion.mpjpe_list)).item(), 4))
-        print("MPJDLE:", round(torch.mean(torch.stack(criterion.mpjdle_list)).item(), 4))
-        print("MPJDLE_h:", round(torch.mean(torch.stack(criterion.mpjdle_h_list)).item(), 4))
-        print("MPJDLE_v:", round(torch.mean(torch.stack(criterion.mpjdle_v_list)).item(), 4))
-        print("MPJDLE_d:", round(torch.mean(torch.stack(criterion.mpjdle_d_list)).item(), 4))
-
-        print("mpjpe_thumb:", round(torch.mean(torch.stack(criterion.mpjpe_thumb_list)).item(), 4))
-        print("mpjdle_h_thumb:", round(torch.mean(torch.stack(criterion.mpjdle_h_thumb_list)).item(), 4))
-        print("mpjdle_v_thumb:", round(torch.mean(torch.stack(criterion.mpjdle_v_thumb_list)).item(), 4))
-        print("mpjdle_d_thumb:", round(torch.mean(torch.stack(criterion.mpjdle_d_thumb_list)).item(), 4))
-
-        print("mpjpe_index:", round(torch.mean(torch.stack(criterion.mpjpe_index_list)).item(), 4))
-        print("mpjdle_h_index:", round(torch.mean(torch.stack(criterion.mpjdle_h_index_list)).item(), 4))
-        print("mpjdle_v_index:", round(torch.mean(torch.stack(criterion.mpjdle_v_index_list)).item(), 4))
-        print("mpjdle_d_index:", round(torch.mean(torch.stack(criterion.mpjdle_d_index_list)).item(), 4))
-
-        print("mpjpe_middle:", round(torch.mean(torch.stack(criterion.mpjpe_middle_list)).item(), 4))
-        print("mpjdle_h_middle:", round(torch.mean(torch.stack(criterion.mpjdle_h_middle_list)).item(), 4))
-        print("mpjdle_v_middle:", round(torch.mean(torch.stack(criterion.mpjdle_v_middle_list)).item(), 4))
-        print("mpjdle_d_middle:", round(torch.mean(torch.stack(criterion.mpjdle_d_middle_list)).item(), 4))
-
-        print("mpjpe_ring:", round(torch.mean(torch.stack(criterion.mpjpe_ring_list)).item(), 4))
-        print("mpjdle_h_ring:", round(torch.mean(torch.stack(criterion.mpjdle_h_ring_list)).item(), 4))
-        print("mpjdle_v_ring:", round(torch.mean(torch.stack(criterion.mpjdle_v_ring_list)).item(), 4))
-        print("mpjdle_d_ring:", round(torch.mean(torch.stack(criterion.mpjdle_d_ring_list)).item(), 4))
-
-        print("mpjpe_pinky:", round(torch.mean(torch.stack(criterion.mpjpe_pinky_list)).item(), 4))
-        print("mpjdle_h_pinky:", round(torch.mean(torch.stack(criterion.mpjdle_h_pinky_list)).item(), 4))
-        print("mpjdle_v_pinky:", round(torch.mean(torch.stack(criterion.mpjdle_v_pinky_list)).item(), 4))
-        print("mpjdle_d_pinky:", round(torch.mean(torch.stack(criterion.mpjdle_d_pinky_list)).item(), 4))
-        # ----------------------试验------------------------
-
-        best_acc = max(best_acc, round((100 * float(criterion.correct_num) / size), 4))
-        print("best MPJPE:", best_mpjpe, " and acc:", best_acc)
-        params = {
-            'epoch': epoch + 1,
-            'loss': round(losses.item(), 4),
-            'loss_kpt': round(loss_dict['loss_kpt'].item(), 4),
-            'loss_cls': loss_dict['loss_ce'].item(),
-            'class_error': loss_dict['class_error'].item(),
-            # 'loss_label': round(loss_dict['loss_label'].item(), 4),
-            'Training_accuracy': round((100 * float(criterion.correct_num) / size), 4),
-            'MPJPE': round(torch.mean(torch.stack(criterion.mpjpe_list)).item(), 4),
-            'MPJDLE': round(torch.mean(torch.stack(criterion.mpjdle_list)).item(), 4),
-            'MPJDLE_h': round(torch.mean(torch.stack(criterion.mpjdle_h_list)).item(), 4),
-            'MPJDLE_v': round(torch.mean(torch.stack(criterion.mpjdle_v_list)).item(), 4),
-            'MPJDLE_d': round(torch.mean(torch.stack(criterion.mpjdle_d_list)).item(), 4),
-
-            'mpjpe_thumb': round(torch.mean(torch.stack(criterion.mpjpe_thumb_list)).item(), 4),
-            'mpjdle_h_thumb': round(torch.mean(torch.stack(criterion.mpjdle_h_thumb_list)).item(), 4),
-            'mpjdle_v_thumb': round(torch.mean(torch.stack(criterion.mpjdle_v_thumb_list)).item(), 4),
-            'mpjdle_d_thumb': round(torch.mean(torch.stack(criterion.mpjdle_d_thumb_list)).item(), 4),
-
-            'mpjpe_index': round(torch.mean(torch.stack(criterion.mpjpe_index_list)).item(), 4),
-            'mpjdle_h_index': round(torch.mean(torch.stack(criterion.mpjdle_h_index_list)).item(), 4),
-            'mpjdle_v_index': round(torch.mean(torch.stack(criterion.mpjdle_v_index_list)).item(), 4),
-            'mpjdle_d_index': round(torch.mean(torch.stack(criterion.mpjdle_d_index_list)).item(), 4),
-
-            'mpjpe_middle': round(torch.mean(torch.stack(criterion.mpjpe_middle_list)).item(), 4),
-            'mpjdle_h_middle': round(torch.mean(torch.stack(criterion.mpjdle_h_middle_list)).item(), 4),
-            'mpjdle_v_middle': round(torch.mean(torch.stack(criterion.mpjdle_v_middle_list)).item(), 4),
-            'mpjdle_d_middle': round(torch.mean(torch.stack(criterion.mpjdle_d_middle_list)).item(), 4),
-
-            'mpjpe_ring': round(torch.mean(torch.stack(criterion.mpjpe_ring_list)).item(), 4),
-            'mpjdle_h_ring': round(torch.mean(torch.stack(criterion.mpjdle_h_ring_list)).item(), 4),
-            'mpjdle_v_ring': round(torch.mean(torch.stack(criterion.mpjdle_v_ring_list)).item(), 4),
-            'mpjdle_d_ring': round(torch.mean(torch.stack(criterion.mpjdle_d_ring_list)).item(), 4),
-
-            'mpjpe_pinky': round(torch.mean(torch.stack(criterion.mpjpe_pinky_list)).item(), 4),
-            'mpjdle_h_pinky': round(torch.mean(torch.stack(criterion.mpjdle_h_pinky_list)).item(), 4),
-            'mpjdle_v_pinky': round(torch.mean(torch.stack(criterion.mpjdle_v_pinky_list)).item(), 4),
-            'mpjdle_d_pinky': round(torch.mean(torch.stack(criterion.mpjdle_d_pinky_list)).item(), 4),
-            'best_acc': best_acc
-        }
-
-        if round(torch.mean(torch.stack(criterion.mpjpe_list)).item(), 4) < best_mpjpe:
-            is_save = True
-            params['best_MPJDLE'] = round(torch.mean(torch.stack(criterion.mpjdle_list)).item(), 4)
-            params['best_MPJDLE_h'] = round(torch.mean(torch.stack(criterion.mpjdle_h_list)).item(), 4)
-            params['best_MPJDLE_v'] = round(torch.mean(torch.stack(criterion.mpjdle_v_list)).item(), 4)
-            params['best_MPJDLE_d'] = round(torch.mean(torch.stack(criterion.mpjdle_d_list)).item(), 4)
-
-            params['best_mpjpe_thumb'] = round(torch.mean(torch.stack(criterion.mpjpe_thumb_list)).item(), 4)
-            params['best_mpjpe_h_thumb'] = round(torch.mean(torch.stack(criterion.mpjdle_h_thumb_list)).item(), 4)
-            params['best_mpjpe_v_thumb'] = round(torch.mean(torch.stack(criterion.mpjdle_v_thumb_list)).item(), 4)
-            params['best_mpjpe_d_thumb'] = round(torch.mean(torch.stack(criterion.mpjdle_d_thumb_list)).item(), 4)
-
-            params['best_mpjpe_index'] = round(torch.mean(torch.stack(criterion.mpjpe_index_list)).item(), 4)
-            params['best_mpjpe_h_index'] = round(torch.mean(torch.stack(criterion.mpjdle_h_index_list)).item(), 4)
-            params['best_mpjpe_v_index'] = round(torch.mean(torch.stack(criterion.mpjdle_v_index_list)).item(), 4)
-            params['best_mpjpe_d_index'] = round(torch.mean(torch.stack(criterion.mpjdle_d_index_list)).item(), 4)
-
-            params['best_mpjpe_middle'] = round(torch.mean(torch.stack(criterion.mpjpe_middle_list)).item(), 4)
-            params['best_mpjpe_h_middle'] = round(torch.mean(torch.stack(criterion.mpjdle_h_middle_list)).item(), 4)
-            params['best_mpjpe_v_middle'] = round(torch.mean(torch.stack(criterion.mpjdle_v_middle_list)).item(), 4)
-            params['best_mpjpe_d_middle'] = round(torch.mean(torch.stack(criterion.mpjdle_d_middle_list)).item(), 4)
-
-            params['best_mpjpe_ring'] = round(torch.mean(torch.stack(criterion.mpjpe_ring_list)).item(), 4)
-            params['best_mpjpe_h_ring'] = round(torch.mean(torch.stack(criterion.mpjdle_h_ring_list)).item(), 4)
-            params['best_mpjpe_v_ring'] = round(torch.mean(torch.stack(criterion.mpjdle_v_ring_list)).item(), 4)
-            params['best_mpjpe_d_ring'] = round(torch.mean(torch.stack(criterion.mpjdle_d_ring_list)).item(), 4)
-
-            params['best_mpjpe_pinky'] = round(torch.mean(torch.stack(criterion.mpjpe_pinky_list)).item(), 4)
-            params['best_mpjpe_h_pinky'] = round(torch.mean(torch.stack(criterion.mpjdle_h_pinky_list)).item(), 4)
-            params['best_mpjpe_v_pinky'] = round(torch.mean(torch.stack(criterion.mpjdle_v_pinky_list)).item(), 4)
-            params['best_mpjpe_d_pinky'] = round(torch.mean(torch.stack(criterion.mpjdle_d_pinky_list)).item(), 4)
-        best_mpjpe = min(best_mpjpe, round(torch.mean(torch.stack(criterion.mpjpe_list)).item(), 4))
-        params['best_MPJPE'] = best_mpjpe
-        logging.info(params)
-        writer.add_scalar('Loss/test_total_loss', params['loss'], epoch + 1)
-        writer.add_scalar('Loss/test_loss_kpt', params['loss_kpt'], epoch + 1)
-        writer.add_scalar('Loss/test_loss_cls', params['loss_cls'], epoch + 1)
-        writer.add_scalar('Accuracy/class_error', params['class_error'], epoch + 1)
-        writer.add_scalar('Accuracy/test_accuracy', params['Training_accuracy'], epoch + 1)
-        writer.add_scalar('Accuracy/test_MPJPE', params['MPJPE'], epoch + 1)
-        writer.add_scalar('Accuracy/test_best_MPJPE', params['best_MPJPE'], epoch + 1)
-        writer.add_scalar('Accuracy/test_best_acc', params['best_acc'], epoch + 1)
-        # params_list.append(params)
-        #     temp_test = 0
-        if criterion.correct_num > temp_test:
-            conf_matrix = criterion.conf_matrix
-            plt.matshow(conf_matrix, cmap=plt.cm.Reds)
-            for i in range(len(conf_matrix)):
-                for j in range(len(conf_matrix)):
-                    plt.text(j, i, str(conf_matrix[i][j]), horizontalalignment='center', verticalalignment='center',
-                             fontsize=4)
-            plt.ylabel('True label')
-            plt.xlabel('Predicted label')
-            # plt.show()
-            plt.savefig(
-                './experiments/conf_matrix/' + model_name + '/' + model_name + '_' +
-                str(epoch) + '_' + str(params['Training_accuracy']) + '.jpg', dpi=300)
-            criterion.write_to_file(conf_matrix, './experiments/weights/' + model_name + '/' +
-                                    model_name + '_' + str(epoch) + '_' + str(params['Training_accuracy']))
-            criterion.conf_matrix = [[0 for _ in range(8)] for _ in range(8)]
-            plt.close()
-            temp_test = criterion.correct_num
+    if not mode and current_accuracy > temp_test:
+        conf_matrix = criterion.conf_matrix
+        plt.matshow(conf_matrix, cmap=plt.cm.Reds)
+        for i in range(len(conf_matrix)):
+            for j in range(len(conf_matrix)):
+                plt.text(j, i, str(conf_matrix[i][j]), horizontalalignment='center', verticalalignment='center',
+                         fontsize=4)
+        plt.ylabel('True label')
+        plt.xlabel('Predicted label')
+        plt.savefig(
+            './experiments/conf_matrix/' + model_name + '/' + model_name + '_' +
+            str(epoch) + '_' + str(params['Training_accuracy']) + '.jpg', dpi=300)
+        criterion.write_to_file(
+            conf_matrix,
+            './experiments/weights/' + model_name + '/' + model_name + '_' +
+            str(epoch) + '_' + str(params['Training_accuracy'])
+        )
+        plt.close()
+        temp_test = current_accuracy
     return best_mpjpe, best_acc, temp_test, is_save
 
 
@@ -882,17 +704,22 @@ def get_conf_matrix(pred, truth, conf_matrix):
     return conf_matrix
 
 def write_to_file(conf_matrix, path):
-    conf_matrix_m = conf_matrix
-    for x in range(len(conf_matrix_m)):
-        base = sum(conf_matrix_m[x])
-        for y in range(len(conf_matrix_m[0])):
-            conf_matrix_m[x][y] = format(conf_matrix_m[x][y] / base, '.2f')
+    conf_matrix_m = []
+    for row in conf_matrix:
+        base = sum(row)
+        if base == 0:
+            conf_matrix_m.append([format(0, '.2f') for _ in row])
+            continue
+        conf_matrix_m.append([format(value / base, '.2f') for value in row])
     df = pd.DataFrame(conf_matrix_m)
     df.to_csv(path + '.csv')
 
 def create_log(filename):
     train_logger = logging.getLogger('training')
     train_logger.setLevel(logging.INFO)
+    for handler in list(train_logger.handlers):
+        train_logger.removeHandler(handler)
+        handler.close()
 
     train_handler = logging.FileHandler(filename + '_train.log')
     train_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -902,6 +729,9 @@ def create_log(filename):
 
     test_logger = logging.getLogger('testing')
     test_logger.setLevel(logging.INFO)
+    for handler in list(test_logger.handlers):
+        test_logger.removeHandler(handler)
+        handler.close()
 
     test_handler = logging.FileHandler(filename + '_test.log')
     test_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -913,34 +743,8 @@ def create_log(filename):
 
 
 def criterion_init(criterion):
+    if hasattr(criterion, 'reset_epoch_stats'):
+        criterion.reset_epoch_stats()
+        return
+
     criterion.correct_num = 0
-    criterion.mpjpe_list = []
-    criterion.mpjdle_list = []
-    criterion.mpjdle_h_list = []
-    criterion.mpjdle_v_list = []
-    criterion.mpjdle_d_list = []
-
-    criterion.mpjpe_thumb_list = []
-    criterion.mpjdle_h_thumb_list = []
-    criterion.mpjdle_v_thumb_list = []
-    criterion.mpjdle_d_thumb_list = []
-
-    criterion.mpjpe_index_list = []
-    criterion.mpjdle_h_index_list = []
-    criterion.mpjdle_v_index_list = []
-    criterion.mpjdle_d_index_list = []
-
-    criterion.mpjpe_middle_list = []
-    criterion.mpjdle_h_middle_list = []
-    criterion.mpjdle_v_middle_list = []
-    criterion.mpjdle_d_middle_list = []
-
-    criterion.mpjpe_ring_list = []
-    criterion.mpjdle_h_ring_list = []
-    criterion.mpjdle_v_ring_list = []
-    criterion.mpjdle_d_ring_list = []
-
-    criterion.mpjpe_pinky_list = []
-    criterion.mpjdle_h_pinky_list = []
-    criterion.mpjdle_v_pinky_list = []
-    criterion.mpjdle_d_pinky_list = []

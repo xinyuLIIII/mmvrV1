@@ -1,3 +1,7 @@
+from collections import defaultdict
+from contextlib import nullcontext
+import os
+
 import torch
 
 
@@ -28,13 +32,137 @@ def autocast_context(device_type, enabled):
     return torch.amp.autocast(device_type=device_type, enabled=enabled)
 
 
-def maybe_compile_model(model, compile_enabled):
+def maybe_compile_model(model, compile_enabled, mode='reduce-overhead'):
     if not compile_enabled:
         return model
     if not hasattr(torch, 'compile'):
         raise RuntimeError('torch.compile is unavailable in the current PyTorch build.')
-    return torch.compile(model)
+    try:
+        compiled_model = torch.compile(model, mode=mode)
+    except Exception as exc:
+        print(f'torch.compile setup failed ({exc}). Falling back to eager mode.')
+        return model
+    print(f'torch.compile enabled with mode={mode}.')
+    return compiled_model
 
 
 def unwrap_model(model):
     return getattr(model, '_orig_mod', model)
+
+
+def ensure_experiment_dirs(model_name, base_dir='./experiments'):
+    for dirname in ('conf_matrix', 'weights', 'savept', 'param'):
+        os.makedirs(os.path.join(base_dir, dirname, model_name), exist_ok=True)
+
+
+def build_dataloader_kwargs(num_workers, pin_memory, shuffle, drop_last, persistent_workers, prefetch_factor):
+    loader_kwargs = {
+        'num_workers': num_workers,
+        'pin_memory': pin_memory,
+        'shuffle': shuffle,
+        'drop_last': drop_last,
+    }
+    if num_workers > 0:
+        loader_kwargs['persistent_workers'] = persistent_workers
+        loader_kwargs['prefetch_factor'] = prefetch_factor
+    return loader_kwargs
+
+
+def move_targets_to_device(targets, device):
+    return [{key: value.to(device, non_blocking=True) for key, value in item.items()} for item in targets]
+
+
+class EpochLossTracker:
+    def __init__(self):
+        self.total_weight = 0
+        self.total_loss_sum = 0.0
+        self.loss_sums = defaultdict(float)
+
+    def update(self, total_loss, loss_dict, weight=1):
+        if weight <= 0:
+            return
+        self.total_weight += weight
+        self.total_loss_sum += float(total_loss.detach().item()) * weight
+        for key, value in loss_dict.items():
+            self.loss_sums[key] += float(value.detach().item()) * weight
+
+    def summary(self):
+        if self.total_weight == 0:
+            return {'loss': 0.0, 'loss_dict': {}}
+        return {
+            'loss': self.total_loss_sum / self.total_weight,
+            'loss_dict': {
+                key: value / self.total_weight for key, value in sorted(self.loss_sums.items())
+            },
+        }
+
+
+def run_pose_epoch(
+    model,
+    criterion,
+    data_loader,
+    device,
+    amp_device_type,
+    amp_enabled,
+    optimizer=None,
+    scaler=None,
+    grad_accum_steps=1,
+    clip_max_norm=0.0,
+    mem_stats_active=False,
+):
+    is_train = optimizer is not None
+    if is_train and scaler is None:
+        raise ValueError('GradScaler is required when optimizer is provided.')
+
+    loss_tracker = EpochLossTracker()
+    mem_stats = None
+    if mem_stats_active:
+        from utils import misc
+
+        mem_stats = misc.MemStatsAccumulator()
+
+    if is_train:
+        model.train()
+        criterion.train()
+        optimizer.zero_grad(set_to_none=True)
+    else:
+        model.eval()
+        criterion.eval()
+
+    train_num_steps = len(data_loader)
+    grad_accum_steps = max(1, grad_accum_steps)
+
+    from tqdm import tqdm
+
+    for step, (samples, imu, target) in enumerate(tqdm(data_loader)):
+        samples = samples.to(device, non_blocking=True)
+        imu = imu.to(device, non_blocking=True)
+        target = move_targets_to_device(target, device)
+        batch_size = samples.shape[0]
+        grad_context = nullcontext() if is_train else torch.no_grad()
+        with grad_context:
+            with autocast_context(amp_device_type, enabled=amp_enabled):
+                out = model(samples, imu)
+                if mem_stats_active and 'pose_memory' in out:
+                    mem_stats.update(out['pose_memory'])
+                loss_dict = criterion(out, target)
+                weight_dict = criterion.weight_dict
+                losses = sum(loss_dict[key] * weight_dict[key] for key in loss_dict.keys() if key in weight_dict)
+        loss_tracker.update(losses, loss_dict, weight=batch_size)
+        if not is_train:
+            continue
+
+        losses_for_backward = losses / grad_accum_steps
+        scaler.scale(losses_for_backward).backward()
+        should_step = ((step + 1) % grad_accum_steps == 0) or ((step + 1) == train_num_steps)
+        if not should_step:
+            continue
+        if clip_max_norm and clip_max_norm > 0:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), clip_max_norm)
+        scaler.step(optimizer)
+        scaler.update()
+        optimizer.zero_grad(set_to_none=True)
+
+    mem_summary = mem_stats.summary() if mem_stats is not None else None
+    return loss_tracker.summary(), criterion.get_epoch_metrics(), mem_summary
