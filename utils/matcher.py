@@ -51,7 +51,7 @@ class HungarianMatcher(nn.Module):
         out_kpt = outputs["pred_kpt"][frame].flatten(0, 1)  # [batch_size * num_queries, 14*3]
         
 
-        tgt_cls = torch.cat([v["kpt_cls"][frame] for v in targets]).squeeze()
+        tgt_cls = torch.cat([v["kpt_cls"][frame].reshape(-1) for v in targets], dim=0).to(torch.int64)
         tgt_kpt = torch.cat([v["kpt"][frame] for v in targets])
         cost_logits = -out_logits[:, tgt_cls]
 
@@ -71,4 +71,3 @@ class HungarianMatcher(nn.Module):
 
 def build_matcher(args):
     return HungarianMatcher(cost_logits=args.set_cost_class, cost_kpt=args.set_cost_kpt)
-

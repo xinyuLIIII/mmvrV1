@@ -85,7 +85,7 @@ class SetCriterion(nn.Module):
         for frame in range(0, 30):
             idx = self._get_src_permutation_idx(indices[frame])
             target_classes_o = torch.cat(
-                [t["kpt_cls"][frame, J] for t, (_, J) in zip(targets, indices[frame])]).squeeze()
+                [t["kpt_cls"][frame, J].reshape(-1) for t, (_, J) in zip(targets, indices[frame])], dim=0)
             target_classes = torch.full(src_logits[frame].shape[:2], 0,
                                         dtype=torch.int64, device=src_logits.device)
             target_classes[idx] = target_classes_o
