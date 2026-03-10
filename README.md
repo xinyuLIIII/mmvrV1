@@ -32,9 +32,9 @@ cd mmVR
   - Recommended script install (faster by default on domestic pip mirrors, with a compatibility switch):
     - `bash scripts/setup_mmvr_py310.sh`
     - Optional custom env name: `bash scripts/setup_mmvr_py310.sh my-mmvr-env`
-    - Default mode is `PYTORCH_INDEX_MODE=mirror` (no `--index-url`, so pip can use your local mirror).
-    - To force official CUDA `cu118` PyTorch wheels:
-      - `PYTORCH_INDEX_MODE=official-cu118 bash scripts/setup_mmvr_py310.sh`
+    - Default mode is `PYTORCH_INDEX_MODE=official-cu118` (uses the official PyTorch `cu118` wheel index for `torch`, `torchvision`, and `torchaudio`).
+    - To switch back to your local pip mirror behavior:
+      - `PYTORCH_INDEX_MODE=mirror bash scripts/setup_mmvr_py310.sh`
     - Optional custom official index (only used in `official-cu118` mode):
       - `TORCH_WHEEL_INDEX=https://download.pytorch.org/whl/cu118 PYTORCH_INDEX_MODE=official-cu118 bash scripts/setup_mmvr_py310.sh`
 

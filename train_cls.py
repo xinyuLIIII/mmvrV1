@@ -11,6 +11,15 @@ import os
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
+
+def resolve_device(requested_device: str) -> torch.device:
+    device = torch.device(requested_device)
+    if device.type == 'cuda' and not torch.cuda.is_available():
+        print('CUDA requested but unavailable. Falling back to CPU.')
+        return torch.device('cpu')
+    return device
+
+
 if __name__ == '__main__':
     args = config.args
     save_path = './experiments/'
@@ -23,7 +32,7 @@ if __name__ == '__main__':
             os.makedirs('./experiments/weights/' + model_name)
             os.makedirs('./experiments/savept/' + model_name)
             os.makedirs('./experiments/param/' + model_name)
-    device = torch.device('cuda')
+    device = resolve_device(args.device)
     amp_enabled = args.amp and device.type == 'cuda'
     # data info
     Train_Dataset = build_dataset(args.dataset_root_kpt, True)
@@ -63,8 +72,8 @@ if __name__ == '__main__':
     print('test_size: ', test_size)
     num_class = 8
     model = resnet50(num_classes=num_class)
-    model = model.cuda()
-    loss_ce = nn.CrossEntropyLoss().cuda()
+    model = model.to(device)
+    loss_ce = nn.CrossEntropyLoss().to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
     train_logger, test_logger = misc.create_log(save_path + model_name)

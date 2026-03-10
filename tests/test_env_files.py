@@ -49,7 +49,7 @@ class EnvironmentDefinitionTests(unittest.TestCase):
         self.assertIn('TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.20.1}"', script_text)
         self.assertIn('TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.5.1}"', script_text)
         self.assertIn('TIMM_VERSION="${TIMM_VERSION:-1.0.24}"', script_text)
-        self.assertIn('PYTORCH_INDEX_MODE="${PYTORCH_INDEX_MODE:-mirror}"', script_text)
+        self.assertIn('PYTORCH_INDEX_MODE="${PYTORCH_INDEX_MODE:-official-cu118}"', script_text)
         self.assertIn('conda create -n "$ENV_NAME" python=3.10 pip -y', script_text)
         self.assertIn('requirements_py310.txt', script_text)
         self.assertIn('mamba_ssm-', script_text)
