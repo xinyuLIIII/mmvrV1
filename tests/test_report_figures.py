@@ -1,7 +1,48 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 
-from utils.report_figures import build_autofigure_prompt, create_report_figures, load_last_run_log_metrics
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from utils.report_figures import (
+    build_autofigure_prompt,
+    create_experiment_comparison_report,
+    create_report_figures,
+    load_last_run_log_metrics,
+)
+
+
+def _write_sample_experiment_logs(experiments_dir):
+    baseline_train_log = experiments_dir / "train_train.log"
+    baseline_test_log = experiments_dir / "train_test.log"
+    current_train_log = experiments_dir / "train_attn_bilstm_train.log"
+    current_test_log = experiments_dir / "train_attn_bilstm_test.log"
+
+    baseline_train_log.write_text(
+        "2026-03-05 00:00:00,000 - INFO - {'epoch': 1, 'loss_kpt': 1.0, 'MPJPE': 200.0, 'MPJDLE': 100.0}\n"
+        "2026-03-05 00:00:01,000 - INFO - {'epoch': 2, 'loss_kpt': 0.5, 'MPJPE': 120.0, 'MPJDLE': 60.0}\n"
+    )
+    baseline_test_log.write_text(
+        "2026-03-05 00:00:00,000 - INFO - {'epoch': 1, 'loss_kpt': 1.1, 'MPJPE': 210.0, 'MPJDLE': 110.0}\n"
+        "2026-03-05 00:00:01,000 - INFO - {'epoch': 2, 'loss_kpt': 1.0, 'MPJPE': 205.0, 'MPJDLE': 105.0}\n"
+    )
+    current_train_log.write_text(
+        "2026-03-05 00:00:00,000 - INFO - {'epoch': 1, 'loss_kpt': 0.9, 'MPJPE': 90.0, 'MPJDLE': 45.0, 'class_error': 100.0, 'Training_accuracy': 0.0}\n"
+        "2026-03-05 00:00:01,000 - INFO - {'epoch': 1, 'loss_kpt': 0.8, 'MPJPE': 80.0, 'MPJDLE': 40.0, 'class_error': 100.0, 'Training_accuracy': 0.0}\n"
+        "2026-03-05 00:00:02,000 - INFO - {'epoch': 18, 'loss_kpt': 0.3, 'MPJPE': 30.0, 'MPJDLE': 15.0, 'class_error': 100.0, 'Training_accuracy': 0.0, 'mpjpe_thumb': 31.0, 'mpjpe_index': 32.0, 'mpjpe_middle': 33.0, 'mpjpe_ring': 34.0, 'mpjpe_pinky': 35.0}\n"
+        "2026-03-05 00:00:03,000 - INFO - {'epoch': 43, 'loss_kpt': 0.15, 'MPJPE': 22.0, 'MPJDLE': 11.0, 'class_error': 100.0, 'Training_accuracy': 0.0, 'mpjpe_thumb': 23.0, 'mpjpe_index': 24.0, 'mpjpe_middle': 25.0, 'mpjpe_ring': 26.0, 'mpjpe_pinky': 27.0}\n"
+        "2026-03-05 00:00:04,000 - INFO - {'epoch': 50, 'loss_kpt': 0.1, 'MPJPE': 18.0, 'MPJDLE': 9.0, 'class_error': 100.0, 'Training_accuracy': 0.0, 'mpjpe_thumb': 19.0, 'mpjpe_index': 20.0, 'mpjpe_middle': 21.0, 'mpjpe_ring': 22.0, 'mpjpe_pinky': 23.0}\n"
+    )
+    current_test_log.write_text(
+        "2026-03-05 00:00:00,000 - INFO - {'epoch': 1, 'loss_kpt': 1.0, 'MPJPE': 100.0, 'MPJDLE': 50.0, 'class_error': 100.0, 'Training_accuracy': 0.0}\n"
+        "2026-03-05 00:00:01,000 - INFO - {'epoch': 1, 'loss_kpt': 0.85, 'MPJPE': 85.0, 'MPJDLE': 42.0, 'class_error': 100.0, 'Training_accuracy': 0.0}\n"
+        "2026-03-05 00:00:02,000 - INFO - {'epoch': 18, 'loss_kpt': 0.33, 'MPJPE': 33.0, 'MPJDLE': 16.5, 'class_error': 100.0, 'Training_accuracy': 0.0, 'mpjpe_thumb': 34.0, 'mpjpe_index': 35.0, 'mpjpe_middle': 36.0, 'mpjpe_ring': 37.0, 'mpjpe_pinky': 38.0}\n"
+        "2026-03-05 00:00:03,000 - INFO - {'epoch': 43, 'loss_kpt': 0.2, 'MPJPE': 24.0, 'MPJDLE': 12.0, 'class_error': 100.0, 'Training_accuracy': 0.0, 'mpjpe_thumb': 25.0, 'mpjpe_index': 26.0, 'mpjpe_middle': 27.0, 'mpjpe_ring': 28.0, 'mpjpe_pinky': 29.0}\n"
+        "2026-03-05 00:00:04,000 - INFO - {'epoch': 50, 'loss_kpt': 0.4, 'MPJPE': 40.0, 'MPJDLE': 20.0, 'class_error': 100.0, 'Training_accuracy': 0.0, 'mpjpe_thumb': 41.0, 'mpjpe_index': 42.0, 'mpjpe_middle': 43.0, 'mpjpe_ring': 44.0, 'mpjpe_pinky': 45.0}\n"
+    )
 
 
 def test_load_last_run_log_metrics_ignores_appended_runs(tmp_path):
@@ -134,3 +175,56 @@ def test_create_report_figures_writes_outputs_and_manifest(tmp_path):
     assert manifest["figures"]["fig3"]["reference_epoch"] == 43
     assert manifest["figures"]["fig2"]["best_epoch"] == 43
     assert "Attention-BiLSTM temporal decoder" in build_autofigure_prompt()
+
+
+def test_create_experiment_comparison_report_rebuilds_summaries(tmp_path):
+    experiments_dir = tmp_path / "experiments"
+    experiments_dir.mkdir()
+    _write_sample_experiment_logs(experiments_dir)
+
+    report = create_experiment_comparison_report(experiments_dir)
+
+    output_dir = experiments_dir / "report_figures"
+    summary = json.loads((output_dir / "comparison_summary.json").read_text())
+
+    assert report["output_dir"] == str(output_dir)
+    assert (output_dir / "comparison_summary.md").exists()
+    assert (output_dir / "fig1_baseline_overfitting.png").exists()
+    assert (output_dir / "fig1_baseline_overfitting.pdf").exists()
+    assert summary["baseline_summary"]["best_test_mpjpe"] == 205.0
+    assert summary["current_run"]["best_test_mpjpe_epoch"] == 43
+    assert summary["current_run"]["best_test_mpjpe"] == 24.0
+    assert summary["baseline_comparison"]["best_test_mpjpe_improvement"] == 181.0
+    assert summary["late_overfitting_signal"]["test_mpjpe_degradation_after_reference"] == 16.0
+    assert summary["classification_head_signal"]["final_test_accuracy"] == 0.0
+
+
+def test_generate_report_figures_cli_runs_end_to_end(tmp_path):
+    experiments_dir = tmp_path / "experiments"
+    output_dir = tmp_path / "custom_output"
+    experiments_dir.mkdir()
+    _write_sample_experiment_logs(experiments_dir)
+
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "generate_report_figures.py"),
+            "--experiments-dir",
+            str(experiments_dir),
+            "--output-dir",
+            str(output_dir),
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads((output_dir / "figure_manifest.json").read_text())
+    summary = json.loads((output_dir / "comparison_summary.json").read_text())
+
+    assert manifest["figures"]["fig2"]["best_epoch"] == 43
+    assert summary["current_run"]["recorded_epoch_count"] == 4
+    assert "comparison_summary.json" in result.stdout

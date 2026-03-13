@@ -26,7 +26,9 @@ WARNING_COLOR = "#d95f02"
 
 
 def _read_json(path):
-    return json.loads(Path(path).read_text())
+    if isinstance(path, (str, Path)):
+        return json.loads(Path(path).read_text())
+    return path
 
 
 def _parse_log_file(log_path, split):
@@ -91,6 +93,203 @@ def _metric_at_epoch(frame, split, epoch, metric):
     return float(split_df.loc[epoch, metric])
 
 
+def _save_figure(fig, output_path):
+    output_path = Path(output_path)
+    fig.savefig(output_path, dpi=220, bbox_inches="tight")
+    fig.savefig(output_path.with_suffix(".pdf"), bbox_inches="tight")
+
+
+def _split_frame(frame, split):
+    return frame[frame["split"] == split].sort_values("epoch").reset_index(drop=True)
+
+
+def _best_epoch_and_value(frame, split, metric):
+    split_df = _split_frame(frame, split)
+    row = split_df.nsmallest(1, metric).iloc[0]
+    return int(row["epoch"]), float(row[metric])
+
+
+def _drop_from_first_to_last(frame, split, metric):
+    split_df = _split_frame(frame, split)
+    return float(split_df.iloc[0][metric] - split_df.iloc[-1][metric])
+
+
+def _final_metric(frame, split, metric):
+    split_df = _split_frame(frame, split)
+    if metric not in split_df.columns:
+        return None
+    value = split_df.iloc[-1][metric]
+    if pd.isna(value):
+        return None
+    return float(value)
+
+
+def _epoch_resets(rows):
+    resets = []
+    prev_epoch = None
+    for index, row in enumerate(rows):
+        epoch = int(row["epoch"])
+        if prev_epoch is not None and epoch <= prev_epoch:
+            resets.append({"index": index, "previous_epoch": prev_epoch, "reset_epoch": epoch})
+        prev_epoch = epoch
+    return resets
+
+
+def _missing_epochs(epochs):
+    if not epochs:
+        return []
+    full_range = set(range(min(epochs), max(epochs) + 1))
+    return sorted(full_range.difference(set(epochs)))
+
+
+def summarize_baseline_run(baseline_log_df):
+    best_epoch, best_mpjpe = _best_epoch_and_value(baseline_log_df, "test", "MPJPE")
+    _, best_mpjdle = _best_epoch_and_value(baseline_log_df, "test", "MPJDLE")
+    final_epoch = int(_split_frame(baseline_log_df, "test").iloc[-1]["epoch"])
+
+    return {
+        "first_epoch": int(_split_frame(baseline_log_df, "test").iloc[0]["epoch"]),
+        "final_epoch": final_epoch,
+        "final_loss_kpt_gap": _metric_at_epoch(baseline_log_df, "test", final_epoch, "loss_kpt")
+        - _metric_at_epoch(baseline_log_df, "train", final_epoch, "loss_kpt"),
+        "train_loss_kpt_drop": _drop_from_first_to_last(baseline_log_df, "train", "loss_kpt"),
+        "test_loss_kpt_drop": _drop_from_first_to_last(baseline_log_df, "test", "loss_kpt"),
+        "final_mpjpe_gap": _metric_at_epoch(baseline_log_df, "test", final_epoch, "MPJPE")
+        - _metric_at_epoch(baseline_log_df, "train", final_epoch, "MPJPE"),
+        "train_mpjpe_drop": _drop_from_first_to_last(baseline_log_df, "train", "MPJPE"),
+        "test_mpjpe_drop": _drop_from_first_to_last(baseline_log_df, "test", "MPJPE"),
+        "final_mpjdle_gap": _metric_at_epoch(baseline_log_df, "test", final_epoch, "MPJDLE")
+        - _metric_at_epoch(baseline_log_df, "train", final_epoch, "MPJDLE"),
+        "train_mpjdle_drop": _drop_from_first_to_last(baseline_log_df, "train", "MPJDLE"),
+        "test_mpjdle_drop": _drop_from_first_to_last(baseline_log_df, "test", "MPJDLE"),
+        "best_test_mpjpe_epoch": best_epoch,
+        "best_test_mpjpe": best_mpjpe,
+        "best_test_mpjdle": best_mpjdle,
+    }
+
+
+def summarize_current_run(current_log_df, baseline_summary, train_rows, test_rows, source_files):
+    test_df = _split_frame(current_log_df, "test")
+    recorded_epochs = [int(epoch) for epoch in test_df["epoch"].tolist()]
+    first_epoch = int(test_df.iloc[0]["epoch"])
+    final_epoch = int(test_df.iloc[-1]["epoch"])
+    best_epoch, best_mpjpe = _best_epoch_and_value(current_log_df, "test", "MPJPE")
+    _, best_mpjdle = _best_epoch_and_value(current_log_df, "test", "MPJDLE")
+    final_train_mpjpe = _metric_at_epoch(current_log_df, "train", final_epoch, "MPJPE")
+    final_test_mpjpe = _metric_at_epoch(current_log_df, "test", final_epoch, "MPJPE")
+    final_train_loss_kpt = _metric_at_epoch(current_log_df, "train", final_epoch, "loss_kpt")
+    final_test_loss_kpt = _metric_at_epoch(current_log_df, "test", final_epoch, "loss_kpt")
+    train_resets = _epoch_resets(train_rows)
+    test_resets = _epoch_resets(test_rows)
+    missing_epochs = _missing_epochs(recorded_epochs)
+
+    notes = []
+    if train_resets or test_resets:
+        notes.append("Logs contain appended runs; only the last monotonically increasing epoch segment is plotted.")
+    if missing_epochs:
+        notes.append(
+            "Recorded epochs in the last segment are incomplete: "
+            + ", ".join(str(epoch) for epoch in missing_epochs[:16])
+            + ("..." if len(missing_epochs) > 16 else "")
+        )
+    final_test_accuracy = _final_metric(current_log_df, "test", "Training_accuracy")
+    final_train_accuracy = _final_metric(current_log_df, "train", "Training_accuracy")
+    final_test_class_error = _final_metric(current_log_df, "test", "class_error")
+    final_train_class_error = _final_metric(current_log_df, "train", "class_error")
+    if final_test_accuracy == 0.0 and final_train_accuracy == 0.0:
+        notes.append("Classification-related metrics remain degenerate and are excluded from the visual claims.")
+
+    current_run = {
+        "first_epoch": first_epoch,
+        "final_epoch": final_epoch,
+        "recorded_epoch_count": len(recorded_epochs),
+        "final_loss_kpt_gap": final_test_loss_kpt - final_train_loss_kpt,
+        "train_loss_kpt_drop": _drop_from_first_to_last(current_log_df, "train", "loss_kpt"),
+        "test_loss_kpt_drop": _drop_from_first_to_last(current_log_df, "test", "loss_kpt"),
+        "final_mpjpe_gap": final_test_mpjpe - final_train_mpjpe,
+        "train_mpjpe_drop": _drop_from_first_to_last(current_log_df, "train", "MPJPE"),
+        "test_mpjpe_drop": _drop_from_first_to_last(current_log_df, "test", "MPJPE"),
+        "final_mpjdle_gap": _metric_at_epoch(current_log_df, "test", final_epoch, "MPJDLE")
+        - _metric_at_epoch(current_log_df, "train", final_epoch, "MPJDLE"),
+        "train_mpjdle_drop": _drop_from_first_to_last(current_log_df, "train", "MPJDLE"),
+        "test_mpjdle_drop": _drop_from_first_to_last(current_log_df, "test", "MPJDLE"),
+        "best_test_mpjpe_epoch": best_epoch,
+        "best_test_mpjpe": best_mpjpe,
+        "best_test_mpjdle": best_mpjdle,
+        "final_train_mpjpe": final_train_mpjpe,
+        "final_test_mpjpe": final_test_mpjpe,
+        "final_train_loss_kpt": final_train_loss_kpt,
+        "final_test_loss_kpt": final_test_loss_kpt,
+    }
+    baseline_comparison = {
+        "baseline_best_test_mpjpe": baseline_summary["best_test_mpjpe"],
+        "baseline_best_test_mpjpe_epoch": baseline_summary["best_test_mpjpe_epoch"],
+        "baseline_final_mpjpe_gap": baseline_summary["final_mpjpe_gap"],
+        "baseline_final_loss_kpt_gap": baseline_summary["final_loss_kpt_gap"],
+        "best_test_mpjpe_improvement": baseline_summary["best_test_mpjpe"] - best_mpjpe,
+        "final_mpjpe_gap_reduction": baseline_summary["final_mpjpe_gap"] - current_run["final_mpjpe_gap"],
+        "final_loss_kpt_gap_reduction": baseline_summary["final_loss_kpt_gap"] - current_run["final_loss_kpt_gap"],
+    }
+    late_overfitting_signal = {
+        "reference_epoch": best_epoch,
+        "train_mpjpe_at_reference": _metric_at_epoch(current_log_df, "train", best_epoch, "MPJPE"),
+        "test_mpjpe_at_reference": _metric_at_epoch(current_log_df, "test", best_epoch, "MPJPE"),
+        "train_mpjpe_at_final": final_train_mpjpe,
+        "test_mpjpe_at_final": final_test_mpjpe,
+        "train_mpjpe_improvement_after_reference": _metric_at_epoch(current_log_df, "train", best_epoch, "MPJPE")
+        - final_train_mpjpe,
+        "test_mpjpe_degradation_after_reference": final_test_mpjpe
+        - _metric_at_epoch(current_log_df, "test", best_epoch, "MPJPE"),
+        "test_mpjdle_degradation_after_reference": _metric_at_epoch(current_log_df, "test", final_epoch, "MPJDLE")
+        - _metric_at_epoch(current_log_df, "test", best_epoch, "MPJDLE"),
+        "mpjpe_gap_at_reference": _metric_at_epoch(current_log_df, "test", best_epoch, "MPJPE")
+        - _metric_at_epoch(current_log_df, "train", best_epoch, "MPJPE"),
+        "mpjpe_gap_at_final": current_run["final_mpjpe_gap"],
+    }
+    classification_head_signal = {
+        "final_train_class_error": final_train_class_error,
+        "final_test_class_error": final_test_class_error,
+        "final_train_accuracy": final_train_accuracy,
+        "final_test_accuracy": final_test_accuracy,
+        "note": "Classification metrics are reported for completeness and are not used in the figure claims.",
+    }
+    return {
+        "extraction_rule": "Use the last monotonically increasing epoch segment for appended Attention-BiLSTM logs.",
+        "source_files": source_files,
+        "recorded_epochs": recorded_epochs,
+        "train_log_resets": train_resets,
+        "test_log_resets": test_resets,
+        "missing_recorded_epochs": missing_epochs,
+        "current_run": current_run,
+        "baseline_comparison": baseline_comparison,
+        "late_overfitting_signal": late_overfitting_signal,
+        "classification_head_signal": classification_head_signal,
+        "notes": notes,
+    }
+
+
+def build_comparison_summary_markdown(summary):
+    baseline = summary["baseline_summary"]
+    current = summary["current_run"]
+    comparison = summary["baseline_comparison"]
+    late = summary["late_overfitting_signal"]
+
+    lines = [
+        "# Attention-BiLSTM comparison summary",
+        "",
+        f"- Baseline best test MPJPE: {baseline['best_test_mpjpe']:.4f} at epoch {baseline['best_test_mpjpe_epoch']}.",
+        f"- Modified best test MPJPE: {current['best_test_mpjpe']:.4f} at epoch {current['best_test_mpjpe_epoch']}.",
+        f"- Best-test MPJPE improvement: {comparison['best_test_mpjpe_improvement']:.4f}.",
+        f"- Baseline final MPJPE gap: {baseline['final_mpjpe_gap']:.4f}; modified final MPJPE gap: {current['final_mpjpe_gap']:.4f}.",
+        f"- Baseline final loss_kpt gap: {baseline['final_loss_kpt_gap']:.4f}; modified final loss_kpt gap: {current['final_loss_kpt_gap']:.4f}.",
+        f"- Late overfitting after epoch {late['reference_epoch']}: test MPJPE worsens by {late['test_mpjpe_degradation_after_reference']:.4f}.",
+        f"- Recorded epochs in the last modified segment: {', '.join(str(epoch) for epoch in summary['recorded_epochs'])}.",
+    ]
+    for note in summary.get("notes", []):
+        lines.append(f"- Note: {note}")
+    return "\n".join(lines) + "\n"
+
+
 def plot_baseline_overfitting(baseline_log_df, baseline_summary, output_path):
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
     specs = [
@@ -120,7 +319,7 @@ def plot_baseline_overfitting(baseline_log_df, baseline_summary, output_path):
     axes[0].legend(frameon=False, loc="best")
     fig.suptitle("Baseline KPT Overfitting Evidence", fontsize=15)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
-    fig.savefig(output_path, dpi=220, bbox_inches="tight")
+    _save_figure(fig, output_path)
     plt.close(fig)
 
 
@@ -182,7 +381,7 @@ def plot_model_improvement_summary(current_log_df, run_summary, output_path):
         )
     fig.suptitle("Baseline vs. Attention-BiLSTM Improvement Summary", fontsize=15)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
-    fig.savefig(output_path, dpi=220, bbox_inches="tight")
+    _save_figure(fig, output_path)
     plt.close(fig)
 
 
@@ -229,7 +428,7 @@ def plot_training_dynamics(current_log_df, run_summary, output_path):
     axes[0].legend(frameon=False, loc="best")
     fig.suptitle("Attention-BiLSTM Training Dynamics and Late Overfitting", fontsize=15)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
-    fig.savefig(output_path, dpi=220, bbox_inches="tight")
+    _save_figure(fig, output_path)
     plt.close(fig)
 
 
@@ -251,7 +450,7 @@ def plot_per_finger_breakdown(current_log_df, run_summary, output_path):
     _apply_axes_style(ax, "Per-finger Test MPJPE Breakdown", "MPJPE")
     ax.legend(frameon=False, loc="best")
     fig.tight_layout()
-    fig.savefig(output_path, dpi=220, bbox_inches="tight")
+    _save_figure(fig, output_path)
     plt.close(fig)
 
 
@@ -358,7 +557,10 @@ def create_report_figures(
             },
             "fig3": {
                 "reference_epoch": run_summary["late_overfitting_signal"]["reference_epoch"],
-                "test_mpjpe_degradation_after_reference": run_summary["late_overfitting_signal"]["test_mpjpe_degradation_after_epoch_43"],
+                "test_mpjpe_degradation_after_reference": run_summary["late_overfitting_signal"].get(
+                    "test_mpjpe_degradation_after_reference",
+                    run_summary["late_overfitting_signal"].get("test_mpjpe_degradation_after_epoch_43"),
+                ),
             },
             "figS1": {
                 "comparison_epochs": [
@@ -372,8 +574,72 @@ def create_report_figures(
     return manifest
 
 
+def create_experiment_comparison_report(experiments_dir, output_dir=None):
+    experiments_dir = Path(experiments_dir)
+    output_dir = Path(output_dir) if output_dir else experiments_dir / "report_figures"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    baseline_train_log = experiments_dir / "train_train.log"
+    baseline_test_log = experiments_dir / "train_test.log"
+    current_train_log = experiments_dir / "train_attn_bilstm_train.log"
+    current_test_log = experiments_dir / "train_attn_bilstm_test.log"
+
+    baseline_log_df = load_log_metrics(baseline_train_log, baseline_test_log)
+    current_train_rows = _parse_log_file(current_train_log, "train")
+    current_test_rows = _parse_log_file(current_test_log, "test")
+    current_log_df = _rows_to_frame(
+        _last_monotonic_segment(current_train_rows) + _last_monotonic_segment(current_test_rows)
+    )
+
+    baseline_summary = summarize_baseline_run(baseline_log_df)
+    run_summary = summarize_current_run(
+        current_log_df,
+        baseline_summary,
+        current_train_rows,
+        current_test_rows,
+        {
+            "baseline_train_log": str(baseline_train_log),
+            "baseline_test_log": str(baseline_test_log),
+            "current_train_log": str(current_train_log),
+            "current_test_log": str(current_test_log),
+        },
+    )
+
+    manifest = create_report_figures(
+        baseline_train_log,
+        baseline_test_log,
+        baseline_summary,
+        run_summary,
+        current_train_log,
+        current_test_log,
+        output_dir,
+    )
+
+    comparison_summary = {
+        "baseline_summary": baseline_summary,
+        **run_summary,
+        "generated_files": manifest["files"],
+    }
+    summary_json_path = output_dir / "comparison_summary.json"
+    summary_md_path = output_dir / "comparison_summary.md"
+    summary_json_path.write_text(json.dumps(comparison_summary, indent=2, ensure_ascii=False))
+    summary_md_path.write_text(build_comparison_summary_markdown(comparison_summary))
+
+    return {
+        "output_dir": str(output_dir),
+        "figure_manifest_path": str(output_dir / FIGURE_FILENAMES["manifest"]),
+        "comparison_summary_path": str(summary_json_path),
+        "manifest": manifest,
+        "comparison_summary": comparison_summary,
+    }
+
+
 __all__ = [
     "build_autofigure_prompt",
+    "build_comparison_summary_markdown",
+    "create_experiment_comparison_report",
     "create_report_figures",
     "load_last_run_log_metrics",
+    "summarize_baseline_run",
+    "summarize_current_run",
 ]
