@@ -68,6 +68,56 @@ def build_dataloader_kwargs(num_workers, pin_memory, shuffle, drop_last, persist
     return loader_kwargs
 
 
+def create_pose_lr_scheduler(optimizer, args):
+    scheduler_name = getattr(args, 'lr_scheduler', 'step')
+    if scheduler_name == 'none':
+        return None
+    if scheduler_name == 'plateau':
+        return torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=args.plateau_factor,
+            patience=args.plateau_patience,
+            min_lr=args.plateau_min_lr,
+        )
+    if scheduler_name == 'step':
+        return torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_drop, gamma=0.5)
+    raise ValueError(f'Unsupported lr scheduler: {scheduler_name}')
+
+
+def step_pose_lr_scheduler(scheduler, scheduler_name, monitor_value=None):
+    if scheduler is None:
+        return
+    if scheduler_name == 'plateau':
+        if monitor_value is None:
+            raise ValueError('monitor_value is required for ReduceLROnPlateau.')
+        scheduler.step(monitor_value)
+        return
+    scheduler.step()
+
+
+def get_pose_monitor_value(loss_summary, metric_summary, monitor_name):
+    if monitor_name == 'loss':
+        return float(loss_summary.get('loss', 0.0))
+    return float(metric_summary.get(monitor_name, 0.0))
+
+
+def get_optimizer_lr(optimizer):
+    if not optimizer.param_groups:
+        return 0.0
+    return float(optimizer.param_groups[0]['lr'])
+
+
+def update_early_stopping_state(best_value, current_value, bad_epochs, patience):
+    improved = best_value is None or current_value < best_value
+    if improved:
+        return current_value, 0, False, True
+
+    bad_epochs += 1
+    should_stop = patience > 0 and bad_epochs >= patience
+    return best_value, bad_epochs, should_stop, False
+
+
 def move_targets_to_device(targets, device):
     return [{key: value.to(device, non_blocking=True) for key, value in item.items()} for item in targets]
 

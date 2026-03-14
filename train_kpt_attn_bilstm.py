@@ -8,12 +8,17 @@ from utils import misc
 from utils.train_runtime import (
     build_dataloader_kwargs,
     configure_runtime,
+    create_pose_lr_scheduler,
     create_grad_scaler,
     ensure_experiment_dirs,
+    get_optimizer_lr,
     get_amp_settings,
+    get_pose_monitor_value,
     maybe_compile_model,
     run_pose_epoch,
     resolve_device,
+    step_pose_lr_scheduler,
+    update_early_stopping_state,
     unwrap_model,
 )
 import os
@@ -43,7 +48,7 @@ if __name__ == '__main__':
     else:
         print(f'AMP enabled: {amp_enabled}')
 
-    train_dataset = build_dataset(args.dataset_root, args.mode)
+    train_dataset = build_dataset(args.dataset_root, args.mode, args=args)
     train_loader_kwargs = build_dataloader_kwargs(
         args.num_workers,
         args.pin_memory,
@@ -69,7 +74,7 @@ if __name__ == '__main__':
     )
     train_size = int(train_dataset.__len__())
 
-    test_dataset = build_dataset(args.dataset_root, False)
+    test_dataset = build_dataset(args.dataset_root, False, args=args)
     test_loader = DataLoader(
         dataset=test_dataset,
         batch_size=args.val_batch_size,
@@ -102,7 +107,7 @@ if __name__ == '__main__':
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=effective_lr, weight_decay=args.weight_decay)
     model = maybe_compile_model(model, args.compile)
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_drop, gamma=0.5)
+    lr_scheduler = create_pose_lr_scheduler(optimizer, args)
     train_logger, test_logger = misc.create_log(save_path + model_name)
     train_writer = SummaryWriter('logs/' + model_name + '/train')
     test_writer = SummaryWriter('logs/' + model_name + '/test')
@@ -113,10 +118,17 @@ if __name__ == '__main__':
     best_acc_train = 0.0
     best_mpjpe_test = 1000.0
     best_acc_test = 0.0
+    best_early_stop_mpjpe = None
+    early_stop_bad_epochs = 0
     temp_test = 0
     scaler = create_grad_scaler(amp_device_type, enabled=amp_enabled)
 
     for epoch in range(args.epoch):
+        current_lr = get_optimizer_lr(optimizer)
+        print(f'epoch {epoch + 1} lr: {current_lr:.8f}')
+        train_logger.info({'epoch': epoch + 1, 'lr': round(current_lr, 10)})
+        train_writer.add_scalar('LR/train', current_lr, epoch + 1)
+        test_writer.add_scalar('LR/test', current_lr, epoch + 1)
         misc.criterion_init(criterion)
         mem_stats_active = mem_stats_enabled and (epoch % mem_stats_every == 0)
         train_loss_summary, train_metric_summary, train_mem_summary = run_pose_epoch(
@@ -132,7 +144,6 @@ if __name__ == '__main__':
             clip_max_norm=args.clip_max_norm,
             mem_stats_active=mem_stats_active,
         )
-        lr_scheduler.step()
         best_mpjpe_train, best_acc_train, _, is_save = misc.log_save(
             model_name,
             train_writer,
@@ -169,11 +180,48 @@ if __name__ == '__main__':
             mode=False,
             temp_test=temp_test,
         )
+        scheduler_monitor = get_pose_monitor_value(
+            test_loss_summary,
+            test_metric_summary,
+            args.plateau_metric,
+        )
+        step_pose_lr_scheduler(lr_scheduler, args.lr_scheduler, scheduler_monitor)
+        current_test_mpjpe = get_pose_monitor_value(
+            test_loss_summary,
+            test_metric_summary,
+            'MPJPE',
+        )
+        best_early_stop_mpjpe, early_stop_bad_epochs, should_stop, improved = update_early_stopping_state(
+            best_early_stop_mpjpe,
+            current_test_mpjpe,
+            early_stop_bad_epochs,
+            args.early_stop_patience,
+        )
+        print(
+            f'validation monitor ({args.plateau_metric}): {scheduler_monitor:.4f}; '
+            f'early_stop_mpjpe: {current_test_mpjpe:.4f}; '
+            f'bad_epochs: {early_stop_bad_epochs}'
+        )
+        test_logger.info({
+            'epoch': epoch + 1,
+            'lr': round(get_optimizer_lr(optimizer), 10),
+            'scheduler_monitor': round(scheduler_monitor, 4),
+            'scheduler_monitor_name': args.plateau_metric,
+            'early_stop_mpjpe': round(current_test_mpjpe, 4),
+            'early_stop_bad_epochs': early_stop_bad_epochs,
+            'early_stop_improved': improved,
+        })
         if mem_stats_active:
             _write_mem_stats(train_writer, train_mem_summary, 'train', epoch, mem_stats_dir)
             _write_mem_stats(test_writer, test_mem_summary, 'test', epoch, mem_stats_dir)
         if is_save:
             torch.save(unwrap_model(model).state_dict(), f'./experiments/param/{model_name}/best_test_mpjpe.pth')
+        if should_stop:
+            print(
+                f'Early stopping triggered at epoch {epoch + 1}: '
+                f'validation MPJPE did not improve for {early_stop_bad_epochs} epochs.'
+            )
+            break
 
     train_writer.close()
     test_writer.close()

@@ -94,6 +94,20 @@ parser.set_defaults(persistent_workers=False)
 parser.add_argument('--mem_stats', action='store_true', default=False)
 parser.add_argument('--mem_stats_save', default='./experiments/mem_stats/')
 parser.add_argument('--mem_stats_every', default=1, type=int)
+parser.add_argument(
+    '--cfar_mode',
+    default='none',
+    choices=('none', 'os2d'),
+    help='Select raw mmwave data or a matching offline CFAR dataset under dataset_root/mmwave_cfar/.',
+)
+parser.add_argument('--cfar_guard', default=1, type=int)
+parser.add_argument('--cfar_train', default=4, type=int)
+parser.add_argument('--cfar_rank_ratio', default=0.75, type=float)
+parser.add_argument('--cfar_pfa', default=1e-3, type=float)
+parser.add_argument('--cfar_soft_mode', default='subtract', choices=('subtract', 'mask'))
+parser.add_argument('--cfar_split_halves', dest='cfar_split_halves', action='store_true')
+parser.add_argument('--no_cfar_split_halves', dest='cfar_split_halves', action='store_false')
+parser.set_defaults(cfar_split_halves=True)
 
 args, _ = parser.parse_known_args()
 

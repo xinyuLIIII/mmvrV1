@@ -134,6 +134,118 @@ class TrainRuntimeTests(unittest.TestCase):
         self.assertEqual(metric_summary['MPJPE'], 0.0)
         self.assertIsNone(mem_summary)
 
+    def test_create_pose_lr_scheduler_plateau_and_step(self):
+        from utils.train_runtime import create_pose_lr_scheduler
+
+        model = nn.Linear(2, 2)
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+        plateau_args = mock.Mock(
+            lr_scheduler='plateau',
+            lr_drop=200,
+            plateau_factor=0.5,
+            plateau_patience=2,
+            plateau_min_lr=1e-6,
+        )
+        scheduler = create_pose_lr_scheduler(optimizer, plateau_args)
+        self.assertIsInstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau)
+
+        step_args = mock.Mock(
+            lr_scheduler='step',
+            lr_drop=7,
+            plateau_factor=0.5,
+            plateau_patience=2,
+            plateau_min_lr=1e-6,
+        )
+        scheduler = create_pose_lr_scheduler(optimizer, step_args)
+        self.assertIsInstance(scheduler, torch.optim.lr_scheduler.StepLR)
+        self.assertEqual(scheduler.step_size, 7)
+
+        none_args = mock.Mock(
+            lr_scheduler='none',
+            lr_drop=7,
+            plateau_factor=0.5,
+            plateau_patience=2,
+            plateau_min_lr=1e-6,
+        )
+        self.assertIsNone(create_pose_lr_scheduler(optimizer, none_args))
+
+    def test_step_pose_lr_scheduler_uses_validation_metric_for_plateau(self):
+        from utils.train_runtime import create_pose_lr_scheduler, step_pose_lr_scheduler
+
+        model = nn.Linear(2, 2)
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+        args = mock.Mock(
+            lr_scheduler='plateau',
+            lr_drop=200,
+            plateau_factor=0.5,
+            plateau_patience=1,
+            plateau_min_lr=1e-6,
+        )
+        scheduler = create_pose_lr_scheduler(optimizer, args)
+
+        step_pose_lr_scheduler(scheduler, args.lr_scheduler, 1.0)
+        self.assertAlmostEqual(optimizer.param_groups[0]['lr'], 0.1)
+        step_pose_lr_scheduler(scheduler, args.lr_scheduler, 1.1)
+        self.assertAlmostEqual(optimizer.param_groups[0]['lr'], 0.1)
+        step_pose_lr_scheduler(scheduler, args.lr_scheduler, 1.2)
+        self.assertAlmostEqual(optimizer.param_groups[0]['lr'], 0.05)
+
+    def test_get_pose_monitor_value_supports_metrics_and_loss(self):
+        from utils.train_runtime import get_pose_monitor_value
+
+        loss_summary = {'loss': 0.75}
+        metric_summary = {'MPJPE': 12.5, 'MPJDLE': 6.25}
+
+        self.assertEqual(get_pose_monitor_value(loss_summary, metric_summary, 'MPJPE'), 12.5)
+        self.assertEqual(get_pose_monitor_value(loss_summary, metric_summary, 'MPJDLE'), 6.25)
+        self.assertEqual(get_pose_monitor_value(loss_summary, metric_summary, 'loss'), 0.75)
+
+    def test_update_early_stopping_state_tracks_best_and_bad_epochs(self):
+        from utils.train_runtime import update_early_stopping_state
+
+        best_value, bad_epochs, should_stop, improved = update_early_stopping_state(
+            best_value=None,
+            current_value=10.0,
+            bad_epochs=0,
+            patience=3,
+        )
+        self.assertEqual(best_value, 10.0)
+        self.assertEqual(bad_epochs, 0)
+        self.assertFalse(should_stop)
+        self.assertTrue(improved)
+
+        best_value, bad_epochs, should_stop, improved = update_early_stopping_state(
+            best_value=best_value,
+            current_value=11.0,
+            bad_epochs=bad_epochs,
+            patience=3,
+        )
+        self.assertEqual(best_value, 10.0)
+        self.assertEqual(bad_epochs, 1)
+        self.assertFalse(should_stop)
+        self.assertFalse(improved)
+
+        best_value, bad_epochs, should_stop, improved = update_early_stopping_state(
+            best_value=best_value,
+            current_value=9.5,
+            bad_epochs=bad_epochs,
+            patience=3,
+        )
+        self.assertEqual(best_value, 9.5)
+        self.assertEqual(bad_epochs, 0)
+        self.assertFalse(should_stop)
+        self.assertTrue(improved)
+
+        _, bad_epochs, should_stop, improved = update_early_stopping_state(
+            best_value=best_value,
+            current_value=9.7,
+            bad_epochs=2,
+            patience=3,
+        )
+        self.assertEqual(bad_epochs, 3)
+        self.assertTrue(should_stop)
+        self.assertFalse(improved)
+
 
 class ConfigFlagTests(unittest.TestCase):
     def _load_config(self, module_name, extra_argv):
@@ -158,6 +270,59 @@ class ConfigFlagTests(unittest.TestCase):
         self.assertEqual(module.args.prefetch_factor, 4)
         self.assertFalse(module.args.amp)
         self.assertTrue(module.args.persistent_workers)
+        self.assertEqual(module.args.lr_scheduler, 'plateau')
+        self.assertEqual(module.args.plateau_metric, 'MPJPE')
+        self.assertEqual(module.args.plateau_factor, 0.5)
+        self.assertEqual(module.args.plateau_patience, 5)
+        self.assertEqual(module.args.plateau_min_lr, 1e-6)
+        self.assertEqual(module.args.early_stop_patience, 10)
+
+    def test_attn_bilstm_scheduler_flags_parse_consistently(self):
+        module = self._load_config(
+            'config_attn_bilstm',
+            [
+                '--lr_scheduler', 'step',
+                '--plateau_metric', 'loss',
+                '--plateau_factor', '0.2',
+                '--plateau_patience', '3',
+                '--plateau_min_lr', '1e-5',
+                '--early_stop_patience', '0',
+            ],
+        )
+
+        self.assertEqual(module.args.lr_scheduler, 'step')
+        self.assertEqual(module.args.plateau_metric, 'loss')
+        self.assertEqual(module.args.plateau_factor, 0.2)
+        self.assertEqual(module.args.plateau_patience, 3)
+        self.assertEqual(module.args.plateau_min_lr, 1e-5)
+        self.assertEqual(module.args.early_stop_patience, 0)
+
+    def test_stage1_configs_expose_cfar_flags(self):
+        for module_name in ('config', 'config_mamba', 'config_attn_bilstm'):
+            default_module = self._load_config(module_name, [])
+            self.assertEqual(default_module.args.cfar_mode, 'none')
+            self.assertEqual(default_module.args.cfar_soft_mode, 'subtract')
+            self.assertTrue(default_module.args.cfar_split_halves)
+
+            enabled_module = self._load_config(
+                module_name,
+                [
+                    '--cfar_mode', 'os2d',
+                    '--cfar_guard', '2',
+                    '--cfar_train', '5',
+                    '--cfar_rank_ratio', '0.6',
+                    '--cfar_pfa', '0.1',
+                    '--cfar_soft_mode', 'mask',
+                    '--no_cfar_split_halves',
+                ],
+            )
+            self.assertEqual(enabled_module.args.cfar_mode, 'os2d')
+            self.assertEqual(enabled_module.args.cfar_guard, 2)
+            self.assertEqual(enabled_module.args.cfar_train, 5)
+            self.assertAlmostEqual(enabled_module.args.cfar_rank_ratio, 0.6)
+            self.assertAlmostEqual(enabled_module.args.cfar_pfa, 0.1)
+            self.assertEqual(enabled_module.args.cfar_soft_mode, 'mask')
+            self.assertFalse(enabled_module.args.cfar_split_halves)
 
 
 if __name__ == '__main__':

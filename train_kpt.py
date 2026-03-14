@@ -42,7 +42,7 @@ if __name__ == '__main__':
     else:
         print(f'AMP enabled: {amp_enabled}')
     # data info
-    Train_Dataset = build_dataset(args.dataset_root, args.mode)
+    Train_Dataset = build_dataset(args.dataset_root, args.mode, args=args)
     train_loader_kwargs = build_dataloader_kwargs(
         args.num_workers,
         args.pin_memory,
@@ -67,7 +67,7 @@ if __name__ == '__main__':
     )
     train_size = int(Train_Dataset.__len__())
 
-    Test_Dataset = build_dataset(args.dataset_root, False)
+    Test_Dataset = build_dataset(args.dataset_root, False, args=args)
     test_loader = DataLoader(
         dataset=Test_Dataset,
         batch_size=args.val_batch_size,

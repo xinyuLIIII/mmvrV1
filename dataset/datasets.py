@@ -1,15 +1,21 @@
 import logging
 import os
 
-import h5py
 import numpy as np
 import torch
 from torch.utils.data.dataset import Dataset
 
+from utils.mmwave_cfar_dataset import (
+    TARGET_NUM_FRAMES,
+    get_cfar_cache_dir,
+    get_uniform_frame_indices,
+    load_raw_mmwave_sample,
+)
+
 log = logging.getLogger(__name__)
 
 class HM_Dataset(Dataset):
-    def __init__(self, dataset_root, mode):
+    def __init__(self, dataset_root, mode, mmwave_source=None):
         super(HM_Dataset, self).__init__()
         self.data_root = dataset_root
         self.is_train = mode
@@ -18,10 +24,9 @@ class HM_Dataset(Dataset):
         else:
             self.file = os.path.join(self.data_root, 'eval_list.txt')
         self.path = self.data_root
-        self.mmwave_dir = os.path.join(self.path, 'mmwave')
         self.imu_dir = os.path.join(self.path, 'imu')
         self.kpt_dir = os.path.join(self.path, 'kpt_gt')
-        self.target_num_frames = 30
+        self.target_num_frames = TARGET_NUM_FRAMES
         self.data = {
             'file_name': list(),
             'person_id': list(),
@@ -31,6 +36,29 @@ class HM_Dataset(Dataset):
         }
         self._kpt_cls_cache = {}
         self._frame_index_cache = {}
+        self.mmwave_source = mmwave_source or {'mode': 'none'}
+        self.mmwave_mode = self.mmwave_source.get('mode', 'none')
+        if self.mmwave_mode == 'none':
+            self.mmwave_dir = os.path.join(self.path, 'mmwave')
+        elif self.mmwave_mode == 'os2d':
+            self.mmwave_dir = get_cfar_cache_dir(
+                self.path,
+                mode=self.mmwave_mode,
+                guard_cells=self.mmwave_source.get('guard_cells', 1),
+                training_cells=self.mmwave_source.get('training_cells', 4),
+                rank_ratio=self.mmwave_source.get('rank_ratio', 0.75),
+                pfa=self.mmwave_source.get('pfa', 1e-3),
+                soft_mode=self.mmwave_source.get('soft_mode', 'subtract'),
+                split_halves=self.mmwave_source.get('split_halves', True),
+                target_num_frames=self.target_num_frames,
+            )
+            if not os.path.isdir(self.mmwave_dir):
+                raise FileNotFoundError(
+                    f'Offline CFAR dataset not found: {self.mmwave_dir}. '
+                    'Run scripts/precompute_mmwave_cfar.py with matching CFAR arguments first.'
+                )
+        else:
+            raise ValueError(f'Unsupported mmwave source mode: {self.mmwave_mode}')
         with open(self.file, encoding='utf-8') as file:
             data_list = file.readlines()
         for string in data_list:
@@ -58,10 +86,27 @@ class HM_Dataset(Dataset):
         return len(self.data['file_name'])
 
     def load_mmwave(self, filename):
-        with h5py.File(os.path.join(self.mmwave_dir, filename + '.mat'), "r") as handle:
-            frame_indices = self.get_frame_indices(handle["data"].shape[-1])
-            mmwave_data = np.asarray(handle["data"][:, :, frame_indices], dtype=np.float32)
-        mmwave_data = np.ascontiguousarray(mmwave_data.transpose((2, 1, 0)))
+        if self.mmwave_mode == 'none':
+            mmwave_path = os.path.join(self.mmwave_dir, filename + '.mat')
+            mmwave_data = load_raw_mmwave_sample(
+                mmwave_path,
+                target_num_frames=self.target_num_frames,
+            )
+            return torch.from_numpy(mmwave_data)
+
+        mmwave_path = os.path.join(self.mmwave_dir, filename + '.npy')
+        if not os.path.exists(mmwave_path):
+            raise FileNotFoundError(
+                f'Offline CFAR sample not found: {mmwave_path}. '
+                'Regenerate the CFAR dataset with scripts/precompute_mmwave_cfar.py.'
+            )
+        mmwave_data = np.load(mmwave_path, mmap_mode='r', allow_pickle=False)
+        if mmwave_data.ndim != 3 or mmwave_data.shape[0] != self.target_num_frames:
+            raise ValueError(
+                f'Offline CFAR sample {mmwave_path} has shape {mmwave_data.shape}, '
+                f'expected ({self.target_num_frames}, H, W).'
+            )
+        mmwave_data = np.array(mmwave_data, dtype=np.float32, copy=True, order='C')
         return torch.from_numpy(mmwave_data)
 
     def load_imu(self, filename):
@@ -105,15 +150,20 @@ class HM_Dataset(Dataset):
 
     def get_frame_indices(self, frame_count):
         if frame_count not in self._frame_index_cache:
-            if frame_count <= 0:
-                raise ValueError('frame_count must be positive.')
-            self._frame_index_cache[frame_count] = np.linspace(
-                0,
-                frame_count - 1,
-                self.target_num_frames,
-                dtype=np.int64,
+            self._frame_index_cache[frame_count] = get_uniform_frame_indices(
+                frame_count,
+                target_num_frames=self.target_num_frames,
             )
         return self._frame_index_cache[frame_count]
 
-def build_dataset(dataset_root, mode):
-    return HM_Dataset(dataset_root, mode)
+def build_dataset(dataset_root, mode, args=None):
+    mmwave_source = {
+        'mode': getattr(args, 'cfar_mode', 'none'),
+        'guard_cells': getattr(args, 'cfar_guard', 1),
+        'training_cells': getattr(args, 'cfar_train', 4),
+        'rank_ratio': getattr(args, 'cfar_rank_ratio', 0.75),
+        'pfa': getattr(args, 'cfar_pfa', 1e-3),
+        'soft_mode': getattr(args, 'cfar_soft_mode', 'subtract'),
+        'split_halves': getattr(args, 'cfar_split_halves', True),
+    }
+    return HM_Dataset(dataset_root, mode, mmwave_source=mmwave_source)
