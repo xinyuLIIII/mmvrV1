@@ -139,7 +139,10 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        x = x.squeeze()
+        if x.dim() == 3:
+            x = x.unsqueeze(0)
+        elif x.dim() != 4:
+            raise ValueError(f'ResNet expects a 3D or 4D tensor, got shape {tuple(x.shape)}')
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
