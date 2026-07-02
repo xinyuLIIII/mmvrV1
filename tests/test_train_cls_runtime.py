@@ -76,6 +76,25 @@ def test_build_optimizer_and_scheduler_uses_config_values(monkeypatch):
     assert scheduler.step_size == args.lr_drop
 
 
+def test_build_classification_model_selects_skeleton_gcn(monkeypatch):
+    train_cls = _load_train_cls_module(monkeypatch)
+    args = SimpleNamespace(
+        cls_model='skeleton_gcn',
+        skeleton_gcn_hidden_dim=16,
+        skeleton_gcn_layers=1,
+        skeleton_gcn_dropout=0.0,
+        skeleton_gcn_branch='fusion',
+        skeleton_gcn_normalize=True,
+    )
+
+    model = train_cls.build_classification_model(args, num_class=8)
+    model.eval()
+    with torch.no_grad():
+        out = model(torch.randn(2, 30, 42, 3))
+
+    assert out.shape == (2, 8)
+
+
 def test_log_run_start_emits_append_friendly_banner(monkeypatch, capsys):
     train_cls = _load_train_cls_module(monkeypatch)
     train_logger = _DummyLogger()

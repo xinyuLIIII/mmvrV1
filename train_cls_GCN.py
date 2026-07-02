@@ -13,6 +13,7 @@ from tqdm import tqdm
 import config
 from dataset.dataset_kpt import build_dataset
 from models.ResNet import resnet50
+from models.SkeletonGCN import skeleton_gcn
 from utils import misc
 from utils.train_runtime import (
     autocast_context,
@@ -80,6 +81,22 @@ def build_optimizer_and_scheduler(model, args):
     return optimizer, scheduler
 
 
+def build_classification_model(args, num_class):
+    cls_model = getattr(args, 'cls_model', 'resnet50')
+    if cls_model == 'resnet50':
+        return resnet50(num_classes=num_class)
+    if cls_model == 'skeleton_gcn':
+        return skeleton_gcn(
+            num_classes=num_class,
+            hidden_dim=getattr(args, 'skeleton_gcn_hidden_dim', 64),
+            num_layers=getattr(args, 'skeleton_gcn_layers', 2),
+            dropout=getattr(args, 'skeleton_gcn_dropout', 0.1),
+            branch=getattr(args, 'skeleton_gcn_branch', 'fusion'),
+            normalize_input=getattr(args, 'skeleton_gcn_normalize', True),
+        )
+    raise ValueError(f"Unknown classification model '{cls_model}'.")
+
+
 def create_run_start_record(
     model_name,
     args,
@@ -97,6 +114,7 @@ def create_run_start_record(
         'timestamp_utc': datetime.now(timezone.utc).isoformat(timespec='seconds'),
         'pid': os.getpid(),
         'model_name': model_name,
+        'cls_run_name': getattr(args, 'cls_run_name', model_name),
         'argv': sys.argv,
         'device': str(device),
         'dataset_root_kpt': args.dataset_root_kpt,
@@ -117,6 +135,12 @@ def create_run_start_record(
         'amp_enabled': amp_enabled,
         'compile_enabled': args.compile,
         'matmul_precision': args.matmul_precision,
+        'cls_model': getattr(args, 'cls_model', 'resnet50'),
+        'skeleton_gcn_branch': getattr(args, 'skeleton_gcn_branch', None),
+        'skeleton_gcn_hidden_dim': getattr(args, 'skeleton_gcn_hidden_dim', None),
+        'skeleton_gcn_layers': getattr(args, 'skeleton_gcn_layers', None),
+        'skeleton_gcn_dropout': getattr(args, 'skeleton_gcn_dropout', None),
+        'skeleton_gcn_normalize': getattr(args, 'skeleton_gcn_normalize', None),
     }
 
 
@@ -183,7 +207,7 @@ def run_classification_epoch(
 def main():
     args = config.args
     save_path = './experiments/'
-    model_name = 'train'
+    model_name = getattr(args, 'cls_run_name', 'train')
     num_class = 8
 
     print(model_name)
@@ -200,7 +224,7 @@ def main():
     print('train_size: ', train_size)
     print('test_size: ', test_size)
 
-    model = resnet50(num_classes=num_class).to(device)
+    model = build_classification_model(args, num_class).to(device)
     loss_ce = nn.CrossEntropyLoss().to(device)
     optimizer, lr_scheduler = build_optimizer_and_scheduler(model, args)
     model = maybe_compile_model(model, args.compile)

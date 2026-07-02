@@ -17,6 +17,25 @@ parser.add_argument('--backbone_pretrain', dest='backbone_pretrain', action='sto
 parser.add_argument('--no_backbone_pretrain', dest='backbone_pretrain', action='store_false')
 parser.set_defaults(backbone_pretrain=True)
 # Model parameters
+parser.add_argument(
+    '--cls_model',
+    default='resnet50',
+    choices=('resnet50', 'skeleton_gcn'),
+    help='Stage-2 classification model.',
+)
+parser.add_argument('--cls_run_name', default='train', help='Stage-2 experiment/log directory name.')
+parser.add_argument('--skeleton_gcn_hidden_dim', default=64, type=int)
+parser.add_argument('--skeleton_gcn_layers', default=2, type=int)
+parser.add_argument('--skeleton_gcn_dropout', default=0.1, type=float)
+parser.add_argument(
+    '--skeleton_gcn_branch',
+    default='fusion',
+    choices=('static', 'dynamic', 'fusion'),
+    help='Skeleton GCN branch ablation mode.',
+)
+parser.add_argument('--skeleton_gcn_normalize', dest='skeleton_gcn_normalize', action='store_true')
+parser.add_argument('--no_skeleton_gcn_normalize', dest='skeleton_gcn_normalize', action='store_false')
+parser.set_defaults(skeleton_gcn_normalize=True)
 parser.add_argument('--frozen_weights', type=str, default=None,
                         help="Path to the pretrained model. If set, only the mask head will be trained")
 # * Backbone

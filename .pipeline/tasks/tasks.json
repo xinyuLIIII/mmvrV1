@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "currentStage": "experiment",
+  "tasks": [
+    {
+      "id": "env-cli-oh-my-paper",
+      "stage": "setup",
+      "title": "Verify CLI-only Oh My Paper runtime",
+      "status": "done",
+      "notes": "Node.js v22.22.2 and codex-cli 0.125.0 are installed. Frontend/Tauri setup intentionally omitted."
+    },
+    {
+      "id": "init-pipeline",
+      "stage": "setup",
+      "title": "Initialize Oh My Paper pipeline memory",
+      "status": "done",
+      "notes": "Created .pipeline memory, docs, tasks, and hook-events directories without overwriting root AGENTS.md."
+    },
+    {
+      "id": "stage2-baseline-ledger",
+      "stage": "experiment",
+      "title": "Record latest stage-2 classification baseline",
+      "status": "done",
+      "notes": "Latest tracked local best is 89.28909952606635% test accuracy from logs/stage2_2026-04-24_150742.log and experiments/train_test.log."
+    },
+    {
+      "id": "stage1-attn-bilstm-analysis",
+      "stage": "experiment",
+      "title": "Analyze completed stage-1 Attention-BiLSTM run",
+      "status": "done",
+      "notes": "Recorded train_kpt_attn_bilstm.py as the current stage1 path. Last clean log segment spans epochs 1-90; best test MPJPE is 21.0356 at epoch 87; best checkpoint is experiments/param/train_attn_bilstm/best_test_mpjpe.pth."
+    },
+    {
+      "id": "verify-python-env",
+      "stage": "experiment",
+      "title": "Verify Python 3.10 Conda environment and CUDA runtime",
+      "status": "todo",
+      "notes": "Run environment checks before launching new training."
+    },
+    {
+      "id": "reproduce-stage2",
+      "stage": "experiment",
+      "title": "Reproduce stage-2 classification run",
+      "status": "todo",
+      "notes": "Use train_cls.py with documented command, log path, git status, data state, and final metrics."
+    },
+    {
+      "id": "audit-stage1-cfar",
+      "stage": "experiment",
+      "title": "Audit stage-1 CFAR preprocessing and metrics",
+      "status": "done",
+      "notes": "CFAR cache is present via data/mmwave_cfar -> /root/autodl-tmp/mmVR/mmwave_cfar, including os2d_frames30_guard1_train4_rank0.75_pfa0.001_subtract_split. The March 17 log filename indicates CFAR, but the exact command line is not captured, so command provenance still needs explicit recording before paper-ready reporting."
+    },
+    {
+      "id": "recover-stage1-command",
+      "stage": "experiment",
+      "title": "Recover or rerun exact stage-1 command",
+      "status": "todo",
+      "notes": "config_attn_bilstm.py defaults cfar_mode to none, while the full log filename is cfar. Before writing final reproducibility text, confirm or rerun train_kpt_attn_bilstm.py with explicit CFAR arguments."
+    },
+    {
+      "id": "compare-readme-target",
+      "stage": "experiment",
+      "title": "Compare local metrics against README target",
+      "status": "todo",
+      "notes": "Explain the gap between 89.2891% local best and 90.8% README result, or reproduce the 90.8% setting."
+    },
+    {
+      "id": "extract-local-paper",
+      "stage": "survey",
+      "title": "Extract structured notes from local paper PDF",
+      "status": "todo",
+      "notes": "Use 2501.13805v2.pdf to populate literature_bank with method, dataset, metrics, and citations."
+    },
+    {
+      "id": "write-experiment-summary",
+      "stage": "publication",
+      "title": "Draft an experiment summary for paper/report use",
+      "status": "todo",
+      "notes": "Only start after commands, splits, checkpoints, and metrics are verified."
+    }
+  ]
+}

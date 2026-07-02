@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "topic": "EgoHand: ego-centric hand pose estimation and gesture recognition with head-mounted millimeter-wave radar and IMUs",
+  "goal": "Reproduce and extend the mmVR/EgoHand two-stage pipeline: stage-1 hand keypoint estimation from millimeter-wave radar plus IMU signals, followed by stage-2 gesture classification from predicted keypoints.",
+  "currentStage": "experiment",
+  "stageStatus": {
+    "stage1": "modified and analyzed locally",
+    "stage2": "local classification baseline recorded; reproduction and comparison remain active"
+  },
+  "successThreshold": "A command-line-only workflow that can reproduce tracked stage-1 and stage-2 experiments, document environment assumptions, and provide a clear path toward matching or exceeding the README-reported 90.8% gesture accuracy.",
+  "repo": "/root/mmvrV1",
+  "localPaper": "2501.13805v2.pdf",
+  "primaryEntryPoints": [
+    "train_kpt.py",
+    "train_kpt_attn_bilstm.py",
+    "train_kpt_mamba.py",
+    "train_cls.py"
+  ],
+  "stage1Current": {
+    "script": "train_kpt_attn_bilstm.py",
+    "model": "models/mmVR_AttnBiLSTM.py",
+    "config": "config_attn_bilstm.py",
+    "resultLogs": [
+      "experiments/train_attn_bilstm_train.log",
+      "experiments/train_attn_bilstm_test.log",
+      "logs/full_train_2026-03-17_123955_cfar.log2"
+    ],
+    "bestCheckpoint": "experiments/param/train_attn_bilstm/best_test_mpjpe.pth",
+    "bestTestMPJPE": 21.0356,
+    "bestTestMPJPEEpoch": 87
+  },
+  "environment": {
+    "python": "Python 3.10 environment recommended by environment_py310.yaml and scripts/setup_mmvr_py310.sh",
+    "node": "v22.22.2",
+    "codex": "codex-cli 0.125.0",
+    "frontend": "Not initialized. This server is CLI-only."
+  }
+}
