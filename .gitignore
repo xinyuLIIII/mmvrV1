@@ -222,7 +222,7 @@ Thumbs.db
 *~
 .idea/
 .vscode/
-
+report/
 # Local dataset symlink mounts (autodl-tmp) and training artifacts
 /data/mmVR/
 /data/imu
@@ -236,3 +236,5 @@ runs/
 lightning_logs/
 tb_logs/
 nohup.out
+1-s2.0-S0921889026000448-main.pdf
+1-s2.0-S0921889026000448-main.pdf:Zone.Identifier
