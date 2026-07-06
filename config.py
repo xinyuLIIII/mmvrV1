@@ -84,12 +84,6 @@ parser.add_argument('--id_loss_coef', default=2, type=float)
 # dataset parameters
 parser.add_argument('--dataset_root', default='./data')
 parser.add_argument('--dataset_root_kpt', default='./data')
-parser.add_argument('--task', default='dual', choices=['gesture', 'identity', 'dual'],
-                    help='multitask mode for train_multitask.py')
-parser.add_argument('--identity_loss_weight', type=float, default=1.0,
-                    help='lambda for identity CE in dual task')
-parser.add_argument('--test_size', type=float, default=0.2,
-                    help='test fraction for GroupShuffleSplit (repeat-leak-free split)')
 parser.add_argument('--remove_difficult', action='store_true')
 
 parser.add_argument('--output_dir', default='',
@@ -135,6 +129,5 @@ parser.add_argument('--no_cfar_split_halves', dest='cfar_split_halves', action='
 parser.set_defaults(cfar_split_halves=True)
 
 args, _ = parser.parse_known_args()
-
 
 
