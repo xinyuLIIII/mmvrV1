@@ -24,7 +24,10 @@ TASK_KEYS = {'gesture': ['gesture'], 'identity': ['identity'],
              'dual': ['gesture', 'identity']}
 
 
-def resolve_model_name(task):
+def resolve_model_name(task, id_weight=1.0):
+    # dual 按 λ 区分输出目录,避免多组 λ 互相覆盖日志/权重
+    if task == 'dual':
+        return f'train_mt_dual_l{id_weight:g}'
     return f'train_mt_{task}'
 
 
@@ -112,7 +115,7 @@ def main():
 
     save_path = './experiments/'
     task = args.task
-    model_name = resolve_model_name(task)
+    model_name = resolve_model_name(task, args.identity_loss_weight)
     print('model_name:', model_name)
 
     device = resolve_device(args.device)
@@ -182,4 +185,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
