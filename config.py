@@ -128,6 +128,14 @@ parser.add_argument('--cfar_split_halves', dest='cfar_split_halves', action='sto
 parser.add_argument('--no_cfar_split_halves', dest='cfar_split_halves', action='store_false')
 parser.set_defaults(cfar_split_halves=True)
 
+parser.add_argument('--task', default='dual', choices=['gesture', 'identity', 'dual'])
+parser.add_argument('--identity_loss_weight', type=float, default=1.0)
+# LOSO（留一人）：设置后 train_multitask_disent.py 用 build_loso_datasets 划分
+parser.add_argument('--loso_person', default=None,
+                    help='Hold out this person_id (e.g. 07) for cross-user gesture eval.')
+parser.add_argument('--loso_out', default='', help='Write a per-run LOSO result JSON here.')
+parser.add_argument('--loso_save_ckpt', action='store_true', default=False)
+
 args, _ = parser.parse_known_args()
 
 
